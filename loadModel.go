@@ -9,6 +9,13 @@ import (
 
 // loadModel kümmert sich um die Vorbereitung und den Download eines GGUF-Modells
 func loadModel(modelURL string, customName string) error {
+
+	// Link-Korrektur (Hugging Face)
+	if strings.Contains(modelURL, "huggingface.co") && strings.Contains(modelURL, "/blob/") {
+		modelURL = strings.Replace(modelURL, "/blob/", "/resolve/", 1)
+		fmt.Println("✨ Hugging Face link corrected for direct download.")
+	}
+
 	alpakaDir, err := getAlpakaDir()
 	if err != nil {
 		return fmt.Errorf("Could not load Alpaka directory: %w", err)

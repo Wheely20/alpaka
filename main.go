@@ -134,6 +134,13 @@ func ensureLlamaInstalled() (string, error) {
 	if _, err := os.Stat(llamaPath); os.IsNotExist(err) {
 		fmt.Println("🦙 llama.cpp was not found.")
 		fmt.Printf("Operating system: %s (%s)\n", runtime.GOOS, runtime.GOARCH)
+
+		// Nutzer um Bestätigung bitten
+		if !askForConfirmation("Download llama.cpp (~20 MB)?") {
+			// Wenn Nutzer ablehnt
+			return "", fmt.Errorf("Download cancelled. Alpaka needs llama.cpp to function; please install it manually.")
+		}
+
 		fmt.Println("➡️  Downloading llama.cpp...")
 
 		if err := initAlpakaDir(); err != nil {
@@ -167,7 +174,26 @@ func ensureLlamaInstalled() (string, error) {
 			return "", fmt.Errorf("Could not extract archive: %w", err)
 		}
 
-		os.Chmod(llamaPath, 0755)
+		// 4. llama-cli finden und in den richtigen Ordner verschieben
+		binaryName := filepath.Base(llamaPath)
+		err = filepath.Walk(destDir, func(path string, info os.FileInfo, walkErr error) error {
+			if walkErr != nil {
+				return walkErr
+			}
+			// Wenn Datei in Unterordner
+			if !info.IsDir() && info.Name() == binaryName && path != llamaPath {
+				// Nach ~/.alpaka/bin/llama-cli verschieben
+				os.Rename(path, llamaPath)
+			}
+			return nil
+		})
+		if err != nil {
+			return "", fmt.Errorf("Could not locate binary after extraction: %w", err)
+		}
+
+		if err := os.Chmod(llamaPath, 0755); err != nil {
+			return "", fmt.Errorf("Could not make file executable: %w", err)
+		}
 	}
 
 	return llamaPath, nil
