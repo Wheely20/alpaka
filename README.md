@@ -12,6 +12,18 @@ Alpaka simplifies the process of downloading, managing, and running local AI mod
 
 ## 🚀 Installation
 
+**For macOS & Linux (Terminal):**
+```bash
+curl -sSL https://raw.githubusercontent.com/Wheely20/alpaka/main/install.sh | bash
+```
+
+**For Windows (PowerShell):**
+```powershell
+irm https://raw.githubusercontent.com/Wheely20/alpaka/main/install.ps1 | iex
+```
+
+OR
+
 Ensure you have [Go installed](https://go.dev/doc/install) (version 1.21+ recommended).
 
 Clone the repository and install it globally using `go install`:
