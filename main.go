@@ -294,10 +294,13 @@ func runServer(modelName string, ctxSize int, port int) error {
 
 // --- COBRA CLI CONFIGURATION ---
 
+var version = "dev"
+
 var rootCmd = &cobra.Command{
-	Use:   "alpaka",
-	Short: "Alpaka – A lightweight manager for llama.cpp",
-	Long:  `Alpaka streamlines the usage of local AI models with llama.cpp`,
+	Use:     "alpaka",
+	Short:   "Alpaka – A lightweight manager for llama.cpp",
+	Long:    `Alpaka streamlines the usage of local AI models with llama.cpp`,
+	Version: version,
 }
 
 var ctxSize int
