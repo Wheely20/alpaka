@@ -16,8 +16,15 @@ import (
 func downloadFile(url string, destPath string) error {
 	fmt.Printf("⬇️  Downloading file from: %s\n", url)
 
+	client := &http.Client{}
+	req, err := http.NewRequest("GET", url, nil)
+	if err != nil {
+		return fmt.Errorf("Error creating request: %w", err)
+	}
+	req.Header.Set("User-Agent", "Alpaka-CLI")
+
 	// 1. HTTP GET-Anfrage erstellen
-	resp, err := http.Get(url)
+	resp, err := client.Do(req)
 	if err != nil {
 		return fmt.Errorf("Error downloading: %w", err)
 	}

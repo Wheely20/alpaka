@@ -90,8 +90,12 @@ func performUpdate() error {
 	// URL zum neuesten GitHub-Release
 	url := fmt.Sprintf("https://github.com/Wheely20/alpaka/releases/latest/download/%s", filename)
 
+	client := &http.Client{}
+	req, _ := http.NewRequest("GET", url, nil)
+	req.Header.Set("User-Agent", "Alpaka-CLI")
+
 	// 4. Herunterladen
-	resp, err := http.Get(url)
+	resp, err := client.Do(req)
 	if err != nil {
 		out.Close()
 		os.Remove(tempPath)

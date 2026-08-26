@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"strings"
 )
 
 // deleteModel löscht ein lokales GGUF-Modell
@@ -15,9 +14,7 @@ func deleteModel(modelName string) error {
 	}
 
 	// Falls ".gguf" nicht angegeben wurde
-	if !strings.HasSuffix(modelName, ".gguf") {
-		modelName += ".gguf"
-	}
+	modelName = ensureGGUFSuffix(modelName)
 
 	modelPath := filepath.Join(alpakaDir, "models", modelName)
 

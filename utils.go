@@ -24,3 +24,10 @@ func askForConfirmation(prompt string) bool {
 
 	return response == "y" || response == "yes"
 }
+
+func ensureGGUFSuffix(name string) string {
+	if !strings.HasSuffix(strings.ToLower(name), ".gguf") {
+		return name + ".gguf"
+	}
+	return name
+}

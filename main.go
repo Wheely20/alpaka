@@ -148,6 +148,9 @@ func ensureLlamaInstalled() (string, error) {
 		}
 
 		tag, err := getLatestLlamaTag()
+		if err != nil {
+			return "", fmt.Errorf("Could not determine latest llama.cpp tag: %w", err)
+		}
 
 		downloadURL, err := getLlamaDownloadURL(tag)
 		if err != nil {
@@ -212,7 +215,7 @@ func runModel(modelName string, ctxSize int, systemPrompt string) error {
 	}
 
 	// Vorübergehendes Verzeichnis für Modelle
-	modelPath := filepath.Join(alpakaDir, "models", modelName+".gguf")
+	modelPath := filepath.Join(alpakaDir, "models", ensureGGUFSuffix(modelName))
 
 	if _, err := os.Stat(modelPath); os.IsNotExist(err) {
 		return fmt.Errorf("Model file '%s' not found at: %s", modelName, modelPath)
@@ -266,7 +269,7 @@ func runServer(modelName string, ctxSize int, port int) error {
 
 	// 3. Modell-Pfad auflösen
 	alpakaDir, _ := getAlpakaDir()
-	modelPath := filepath.Join(alpakaDir, "models", modelName+".gguf")
+	modelPath := filepath.Join(alpakaDir, "models", ensureGGUFSuffix(modelName))
 
 	if _, err := os.Stat(modelPath); os.IsNotExist(err) {
 		return fmt.Errorf("Model file '%s' not found at: %s", modelName, modelPath)
@@ -347,7 +350,7 @@ var loadCmd = &cobra.Command{
 			customName = args[1]
 		} else if len(args) == 3 {
 			// Wenn jemand 3 Argumente tippt, aber das mittlere nicht "as" ist
-			return fmt.Errorf("ungültige Syntax. Nutze: alpaka download <url> as <name>")
+			return fmt.Errorf("Invalid Syntax. Use: alpaka load <url> as <name>")
 		}
 		return loadModel(modelURL, customName)
 	},

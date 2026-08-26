@@ -15,7 +15,11 @@ type githubRelease struct {
 func getLatestLlamaTag() (string, error) {
 	url := "https://api.github.com/repos/ggml-org/llama.cpp/releases/latest"
 
-	resp, err := http.Get(url)
+	client := &http.Client{}
+	req, _ := http.NewRequest("GET", url, nil)
+	req.Header.Set("User-Agent", "Alpaka-CLI")
+
+	resp, err := client.Do(req)
 	if err != nil {
 		return "", err
 	}

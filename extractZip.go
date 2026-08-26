@@ -6,6 +6,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 )
 
 // extractZip entpackt ein ZIP-Archiv in das Zielverzeichnis
@@ -21,20 +22,24 @@ func extractZip(archivePath string, destDir string) error {
 
 	// Gehe durch alle Dateien im ZIP-Archiv
 	for _, f := range r.File {
-		fpath := filepath.Join(destDir, f.Name)
+		cleanDest := filepath.Clean(destDir)
+		fpath := filepath.Join(cleanDest, f.Name)
+		if !strings.HasPrefix(fpath, cleanDest+string(os.PathSeparator)) {
+			return fmt.Errorf("Illegal file path in zip: %s", f.Name)
+		}
 
-		// Wenn es ein Ordner ist, erstelle ihn
+		// Wenn Ordner; erstellen
 		if f.FileInfo().IsDir() {
 			os.MkdirAll(fpath, os.ModePerm)
 			continue
 		}
 
-		// Stelle sicher, dass der Ordner für die Datei existiert
+		// Überprüfe, dass Ordner für die Datei existiert
 		if err = os.MkdirAll(filepath.Dir(fpath), os.ModePerm); err != nil {
 			return err
 		}
 
-		// Erstelle die Zieldatei
+		// Zieldatei erstellen
 		outFile, err := os.OpenFile(fpath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, f.Mode())
 		if err != nil {
 			return err
@@ -47,7 +52,7 @@ func extractZip(archivePath string, destDir string) error {
 			return err
 		}
 
-		// Kopiere den Inhalt
+		// Inhalt kopieren
 		_, err = io.Copy(outFile, rc)
 
 		outFile.Close()
