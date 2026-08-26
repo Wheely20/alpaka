@@ -40,5 +40,7 @@ var translations = map[string]map[string]string{
 		"config_show_short":    "Zeigt die aktuell gespeicherte Konfiguration",
 		"invalid_load_syntax":  "ungültige Syntax. Nutze: alpaka download <url> as <name>",
 		"run_err":              "Modell-Datei nicht gefunden",
+		"selfupdate_use":       "selfupdate",
+		"selfupdate_short":     "Aktualisiert Alpaka auf die neueste Version",
 	},
 }

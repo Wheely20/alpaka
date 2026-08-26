@@ -426,6 +426,14 @@ var configShowCmd = &cobra.Command{
 	},
 }
 
+var selfupdateCmd = &cobra.Command{
+	Use:   "selfupdate",
+	Short: "Updates Alpaka to the latest version",
+	RunE: func(cmd *cobra.Command, args []string) error {
+		return performUpdate()
+	},
+}
+
 func init() {
 	rootCmd.CompletionOptions.DisableDefaultCmd = true
 
@@ -443,6 +451,7 @@ func init() {
 	rootCmd.AddCommand(configCmd)
 	configCmd.AddCommand(configSetCliCmd)
 	configCmd.AddCommand(configShowCmd)
+	rootCmd.AddCommand(selfupdateCmd)
 }
 
 // applyTranslations überschreibt die Cobra-Texte
@@ -489,6 +498,9 @@ func applyTranslations(lang string) {
 
 	configShowCmd.Use = t["config_show_use"]
 	configShowCmd.Short = t["config_show_short"]
+
+	selfupdateCmd.Use = t["selfupdate_use"]
+	selfupdateCmd.Short = t["selfupdate_short"]
 }
 
 func main() {
