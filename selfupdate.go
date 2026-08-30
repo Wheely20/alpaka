@@ -73,8 +73,8 @@ func performUpdate() error {
 		return fmt.Errorf("Couldn't query latest version: %w", err)
 	}
 
-	if latestVersion == version {
-		fmt.Printf("✨ Alpaka is already up to date (%s)!\n", version)
+	if latestVersion == "v"+version {
+		fmt.Printf("✨ Alpaka is already up to date (%s).\n", version)
 		return nil
 	}
 

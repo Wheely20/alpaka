@@ -302,12 +302,13 @@ var version = "dev"
 var rootCmd = &cobra.Command{
 	Use:     "alpaka",
 	Short:   "Alpaka – A lightweight manager for llama.cpp",
-	Long:    `Alpaka streamlines the usage of local AI models with llama.cpp`,
+	Long:    `Alpaka simplifies the usage of local AI models with llama.cpp`,
 	Version: version,
 }
 
 var ctxSize int
 var sysPrompt string
+var personaName string
 
 var runCmd = &cobra.Command{
 	Use:          "run [modelname]",
@@ -316,6 +317,22 @@ var runCmd = &cobra.Command{
 	Args:         cobra.ExactArgs(1), // Erfordert genau ein Argument (z.B. llama3)
 	RunE: func(cmd *cobra.Command, args []string) error {
 		modelName := args[0]
+
+		// Überprüfen, ob eine Persona angefordert wurde
+		if personaName != "" {
+			personas, err := loadPersonas()
+			if err != nil {
+				return fmt.Errorf("Could not load personas: %w", err)
+			}
+
+			// Prüfen, ob die Map existiert und die Persona enthält
+			if prompt, exists := personas[personaName]; exists {
+				sysPrompt = prompt // Überschreibe den -s / --sys Prompt
+			} else {
+				return fmt.Errorf("Persona '%s' was not found", personaName)
+			}
+		}
+
 		return runModel(modelName, ctxSize, sysPrompt)
 	},
 }
@@ -349,7 +366,7 @@ var loadCmd = &cobra.Command{
 			// Erlaubt die Kurzform "alpaka download <url> <name>"
 			customName = args[1]
 		} else if len(args) == 3 {
-			// Wenn jemand 3 Argumente tippt, aber das mittlere nicht "as" ist
+			// Wenn das mittlere Argument nicht "as" ist
 			return fmt.Errorf("Invalid Syntax. Use: alpaka load <url> as <name>")
 		}
 		return loadModel(modelURL, customName)
@@ -366,13 +383,109 @@ var listCmd = &cobra.Command{
 
 var deleteCmd = &cobra.Command{
 	Use:          "delete [modelname]",
-	Aliases:      []string{"rm", "remove"}, // Erlaubt auch: alpaka rm <modell>
+	Aliases:      []string{"rm", "remove"},
 	Short:        "Deletes a downloaded model",
 	SilenceUsage: true,
 	Args:         cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		modelName := args[0]
 		return deleteModel(modelName)
+	},
+}
+
+var personaCmd = &cobra.Command{
+	Use:   "persona",
+	Short: "Manages your AI profiles (personas)",
+}
+
+var personaAddCmd = &cobra.Command{
+	Use:   "add [name] [prompt]",
+	Short: "Creates a new persona or updates an existing one",
+	Args:  cobra.ExactArgs(2), // Erfordert Name und Prompt
+	RunE: func(cmd *cobra.Command, args []string) error {
+		name := args[0]
+		prompt := args[1]
+
+		// 1. Bestehende Personas laden
+		personas, err := loadPersonas()
+		if err != nil {
+			return fmt.Errorf("Could not load personas: %w", err)
+		}
+
+		// 2. Neue Persona einfügen
+		personas[name] = prompt
+
+		// 3. Speichern
+		if err := savePersonas(personas); err != nil {
+			return fmt.Errorf("Error saving persona: %w", err)
+		}
+
+		fmt.Printf("Persona '%s' was successfully saved!\n", name)
+		return nil
+	},
+}
+
+var personaListCmd = &cobra.Command{
+	Use:   "list",
+	Short: "Shows all saved personas",
+	Args:  cobra.NoArgs,
+	RunE: func(cmd *cobra.Command, args []string) error {
+		// 1. Personas laden
+		personas, err := loadPersonas()
+		if err != nil {
+			return fmt.Errorf("Could not load personas: %w", err)
+		}
+
+		// 2. Prüfen, ob Personas existieren
+		if len(personas) == 0 {
+			fmt.Println("No personas found. Create one with 'alpaka persona add <name> <prompt>'.")
+			return nil
+		}
+
+		// 3. Personas in der Konsole ausgeben
+		fmt.Println("Saved personas:")
+		for name, prompt := range personas {
+			// Kürze den Prompt für die Anzeige, falls er zu lang ist
+			displayPrompt := prompt
+			if len(displayPrompt) > 60 {
+				displayPrompt = displayPrompt[:57] + "..."
+			}
+			fmt.Printf("  - %-10s %s\n", name+":", displayPrompt)
+		}
+
+		return nil
+	},
+}
+
+var personaDeleteCmd = &cobra.Command{
+	Use:     "delete [name]",
+	Aliases: []string{"rm", "remove"},
+	Short:   "Deletes a saved persona",
+	Args:    cobra.ExactArgs(1),
+	RunE: func(cmd *cobra.Command, args []string) error {
+		name := args[0]
+
+		// 1. Personas laden
+		personas, err := loadPersonas()
+		if err != nil {
+			return fmt.Errorf("Could not load personas: %w", err)
+		}
+
+		// 2. Prüfen, ob die Persona existiert
+		if _, exists := personas[name]; !exists {
+			return fmt.Errorf("Persona '%s' was not found", name)
+		}
+
+		// 3. Aus der Map entfernen
+		delete(personas, name)
+
+		// 4. Aktualisierte Map speichern
+		if err := savePersonas(personas); err != nil {
+			return fmt.Errorf("Error saving personas after deletion: %w", err)
+		}
+
+		fmt.Printf("Persona '%s' was successfully deleted!\n", name)
+		return nil
 	},
 }
 
@@ -442,6 +555,7 @@ func init() {
 
 	runCmd.Flags().IntVarP(&ctxSize, "ctx", "c", 2048, "Sets the maximum context size")
 	runCmd.Flags().StringVarP(&sysPrompt, "sys", "s", "", "Defines a custom system prompt for the AI")
+	runCmd.Flags().StringVarP(&personaName, "persona", "p", "", "Use a pre-defined persona")
 
 	serveCmd.Flags().IntVarP(&ctxSize, "ctx", "c", 2048, "Sets the maximum context size")
 	serveCmd.Flags().IntVarP(&serverPort, "port", "p", 8080, "Port for the local server")
@@ -451,9 +565,18 @@ func init() {
 	rootCmd.AddCommand(loadCmd)
 	rootCmd.AddCommand(listCmd)
 	rootCmd.AddCommand(deleteCmd)
+
+	//persona commands
+	rootCmd.AddCommand(personaCmd)
+	personaCmd.AddCommand(personaAddCmd)
+	personaCmd.AddCommand(personaListCmd)
+	personaCmd.AddCommand(personaDeleteCmd)
+
+	//config commands
 	rootCmd.AddCommand(configCmd)
 	configCmd.AddCommand(configSetCliCmd)
 	configCmd.AddCommand(configShowCmd)
+
 	rootCmd.AddCommand(selfupdateCmd)
 }
 
@@ -492,6 +615,7 @@ func applyTranslations(lang string) {
 	deleteCmd.Use = t["delete_use"]
 	deleteCmd.Short = t["delete_short"]
 
+	//Config commands
 	configCmd.Use = t["config_use"]
 	configCmd.Short = t["config_short"]
 	configCmd.Long = t["config_long"]
