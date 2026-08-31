@@ -282,9 +282,9 @@ func runServer(modelName string, ctxSize int, port int) error {
 	// 4. Server-Befehl zusammenbauen
 	cmd := exec.Command(serverPath,
 		"-m", modelPath,
-		"-c", ctxString, // Kontextgröße
+		"-c", ctxString, // context size
 		"--port", fmt.Sprintf("%d", port),
-		"--host", "127.0.0.1", // Standardmäßig nur lokal erreichbar
+		"--host", "127.0.0.1",
 	)
 
 	// Verbindet Stdin, Stdout und Stderr mit dem Terminal
@@ -578,6 +578,9 @@ func init() {
 	configCmd.AddCommand(configShowCmd)
 
 	rootCmd.AddCommand(selfupdateCmd)
+
+	// Internal MCP command
+	rootCmd.AddCommand(internalMcpCmd)
 }
 
 // applyTranslations überschreibt die Cobra-Texte
