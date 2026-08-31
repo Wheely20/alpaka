@@ -1,12 +1,15 @@
 package main
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
+	"os"
+	"strings"
 
 	"github.com/mark3labs/mcp-go/client"
 	"github.com/mark3labs/mcp-go/mcp"
@@ -136,4 +139,60 @@ func executeLocalTool(ctx context.Context, mcpClient client.MCPClient, name stri
 	}
 
 	return "The tool was executed, but did not return a text response."
+}
+
+// getAvailableTools gets the tools from the MCP-Server and converts them to the OpenAI format
+func getAvailableTools(ctx context.Context, mcpClient client.MCPClient) ([]interface{}, error) {
+	toolList, err := mcpClient.ListTools(ctx, mcp.ListToolsRequest{})
+	if err != nil {
+		return nil, err
+	}
+
+	var openAITools []interface{}
+	for _, t := range toolList.Tools {
+		openAITools = append(openAITools, map[string]interface{}{
+			"type": "function",
+			"function": map[string]interface{}{
+				"name":        t.Name,
+				"description": t.Description,
+				"parameters":  t.InputSchema,
+			},
+		})
+	}
+	return openAITools, nil
+}
+
+func startTerminalChat(ctx context.Context, serverURL string, mcpClient client.MCPClient, sysPrompt string, availableTools []interface{}) {
+	reader := bufio.NewReader(os.Stdin)
+	var history []ChatMessage
+
+	if sysPrompt != "" {
+		history = append(history, ChatMessage{Role: "system", Content: sysPrompt})
+	}
+
+	fmt.Println("\n Chat gestartet. Beenden mit '/exit'.")
+
+	for {
+		fmt.Print("\nDu: ")
+		input, _ := reader.ReadString('\n')
+		input = strings.TrimSpace(input)
+
+		if input == "/exit" {
+			break
+		}
+		if input == "" {
+			continue
+		}
+
+		// append user message to history
+		history = append(history, ChatMessage{Role: "user", Content: input})
+
+		// call the agent loop
+		newHistory, err := sendToModelWithTools(ctx, serverURL, mcpClient, history, availableTools)
+		if err != nil {
+			fmt.Printf("\n  [Fehler: %v]\n", err)
+		} else {
+			history = newHistory // update history with the new messages from the model
+		}
+	}
 }
