@@ -231,6 +231,10 @@ func runModel(modelName string, ctxSize int, systemPrompt string) error {
 	// Kill the server process when alpaka exits
 	defer cmd.Process.Kill()
 
+	if err := waitForServer("http://127.0.0.1:8081"); err != nil {
+		return err
+	}
+
 	// 3. MCP Client initialisieren
 	ctx := context.Background()
 	mcpClient, err := startMCPClient(ctx)
@@ -247,9 +251,6 @@ func runModel(modelName string, ctxSize int, systemPrompt string) error {
 	if len(tools) > 0 {
 		fmt.Printf("Native MCP Tools active (%d tools loaded)\n", len(tools))
 	}
-
-	// Kurze Pause, damit der llama-server hochfahren kann (in Zukunft eleganter über einen Ping lösbar)
-	fmt.Println("Loading model into memory... (this may take a moment)")
 
 	// 5. Chat starten
 	startTerminalChat(ctx, "http://127.0.0.1:8081", mcpClient, systemPrompt, tools)

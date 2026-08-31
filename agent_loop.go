@@ -6,7 +6,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"io"
 	"net/http"
 	"os"
 	"strings"
@@ -26,8 +25,9 @@ type ChatMessage struct {
 
 // tool call structure
 type ToolCall struct {
-	ID       string       `json:"id"`
-	Type     string       `json:"type"`
+	Index    *int         `json:"index,omitempty"`
+	ID       string       `json:"id,omitempty"`
+	Type     string       `json:"type,omitempty"`
 	Function ToolFunction `json:"function"`
 }
 
@@ -45,17 +45,17 @@ type ChatResponse struct {
 }
 
 func sendToModelWithTools(ctx context.Context, serverURL string, mcpClient client.MCPClient, history []ChatMessage, availableTools []interface{}) ([]ChatMessage, error) {
-	// 1. prepare request
+	// 1. prepare the request body for the API
 	requestBody, err := json.Marshal(map[string]interface{}{
 		"model":    "default",
 		"messages": history,
 		"tools":    availableTools,
+		"stream":   true,
 	})
 	if err != nil {
 		return history, err
 	}
 
-	// 2. send HTTP POST to local llama-server
 	req, err := http.NewRequestWithContext(ctx, "POST", serverURL+"/v1/chat/completions", bytes.NewBuffer(requestBody))
 	if err != nil {
 		return history, err
@@ -68,30 +68,95 @@ func sendToModelWithTools(ctx context.Context, serverURL string, mcpClient clien
 	}
 	defer resp.Body.Close()
 
-	bodyBytes, _ := io.ReadAll(resp.Body)
-	var chatResp ChatResponse
-	if err := json.Unmarshal(bodyBytes, &chatResp); err != nil {
-		return history, fmt.Errorf("Error while parsing server response: %v", err)
+	// 2. read the response line by line (streaming)
+	scanner := bufio.NewScanner(resp.Body)
+	var fullContent string
+	var finalFinishReason string
+	var accumulatedToolCalls []ToolCall
+
+	// KI-Präfix nur einmal am Anfang ausgeben
+	fmt.Print("\nKI: ")
+
+	for scanner.Scan() {
+		line := scanner.Text()
+
+		// Unwichtige Zeilen überspringen
+		if !strings.HasPrefix(line, "data: ") || line == "data: [DONE]" {
+			continue
+		}
+
+		// "data: " abschneiden, um sauberes JSON zu erhalten
+		dataStr := strings.TrimPrefix(line, "data: ")
+
+		var chunk struct {
+			Choices []struct {
+				Delta struct {
+					Content   string     `json:"content"`
+					ToolCalls []ToolCall `json:"tool_calls"`
+				} `json:"delta"`
+				FinishReason string `json:"finish_reason"`
+			} `json:"choices"`
+		}
+
+		if err := json.Unmarshal([]byte(dataStr), &chunk); err != nil {
+			continue
+		}
+
+		if len(chunk.Choices) > 0 {
+			choice := chunk.Choices[0]
+			if choice.FinishReason != "" {
+				finalFinishReason = choice.FinishReason
+			}
+
+			// a) Text direkt ins Terminal drucken
+			if choice.Delta.Content != "" {
+				fmt.Print(choice.Delta.Content)
+				fullContent += choice.Delta.Content
+			}
+
+			// b) Zerstückelte Tool-Calls wieder zusammenbauen
+			for _, tc := range choice.Delta.ToolCalls {
+				if tc.Index != nil {
+					idx := *tc.Index
+					// Slice vergrößern, falls ein neues Tool aufgerufen wird
+					for len(accumulatedToolCalls) <= idx {
+						accumulatedToolCalls = append(accumulatedToolCalls, ToolCall{})
+					}
+					// Daten anfügen
+					if tc.ID != "" {
+						accumulatedToolCalls[idx].ID = tc.ID
+					}
+					if tc.Type != "" {
+						accumulatedToolCalls[idx].Type = tc.Type
+					}
+					if tc.Function.Name != "" {
+						accumulatedToolCalls[idx].Function.Name = tc.Function.Name
+					}
+					if tc.Function.Arguments != "" {
+						accumulatedToolCalls[idx].Function.Arguments += tc.Function.Arguments
+					}
+				}
+			}
+		}
 	}
-
-	// 3. check if response is empty
-	if len(chatResp.Choices) == 0 {
-		return history, fmt.Errorf("Empty response from server")
+	if err := scanner.Err(); err != nil {
+		return history, err
 	}
+	fmt.Println() // Zeilenumbruch nach der fertigen Antwort
 
-	responseMsg := chatResp.Choices[0].Message
-	finishReason := chatResp.Choices[0].FinishReason
-
-	// add answer to history
+	// 3. Die komplette Antwort zur Historie hinzufügen
+	responseMsg := ChatMessage{
+		Role:      "assistant",
+		Content:   fullContent,
+		ToolCalls: accumulatedToolCalls,
+	}
 	history = append(history, responseMsg)
 
 	// --- AGENTIC LOOP ---
-	// Wenn finish_reason == "tool_calls" ist, will das Modell ein Werkzeug nutzen
-	if finishReason == "tool_calls" && len(responseMsg.ToolCalls) > 0 {
-		for _, toolCall := range responseMsg.ToolCalls {
-			fmt.Printf("\n[Alpaka führt Tool aus: %s...]\n", toolCall.Function.Name)
+	if finalFinishReason == "tool_calls" && len(accumulatedToolCalls) > 0 {
+		for _, toolCall := range accumulatedToolCalls {
+			fmt.Printf("  [Führe Werkzeug aus: %s...]\n", toolCall.Function.Name)
 
-			// Den Request via MCP ausführen
 			toolResultString := executeLocalTool(ctx, mcpClient, toolCall.Function.Name, toolCall.Function.Arguments)
 
 			history = append(history, ChatMessage{
@@ -102,12 +167,10 @@ func sendToModelWithTools(ctx context.Context, serverURL string, mcpClient clien
 			})
 		}
 
-		// history goes back to the model for further processing
+		// Rekursion für die Folge-Antwort nach der Tool-Ausführung
 		return sendToModelWithTools(ctx, serverURL, mcpClient, history, availableTools)
 	}
 
-	// return the answer
-	fmt.Printf("\nKI: %s\n", responseMsg.Content)
 	return history, nil
 }
 

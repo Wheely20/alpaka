@@ -3,8 +3,10 @@ package main
 import (
 	"bufio"
 	"fmt"
+	"net/http"
 	"os"
 	"strings"
+	"time"
 )
 
 // askForConfirmation fragt den Nutzer nach einer Bestätigung [y/N]
@@ -30,4 +32,21 @@ func ensureGGUFSuffix(name string) string {
 		return name + ".gguf"
 	}
 	return name
+}
+
+func waitForServer(url string) error {
+	fmt.Print("Loading model...")
+	client := http.Client{Timeout: 2 * time.Second}
+
+	// Wait max 40 seconds
+	for i := 0; i < 40; i++ {
+		resp, err := client.Get(url + "/health")
+		if err == nil && resp.StatusCode == 200 {
+			return nil
+		}
+		fmt.Print(".")
+		time.Sleep(1 * time.Second)
+	}
+	fmt.Println()
+	return fmt.Errorf("Error: Model took too long to load.")
 }
