@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/mark3labs/mcp-go/client"
 	"github.com/mark3labs/mcp-go/mcp"
@@ -44,6 +45,12 @@ type ChatResponse struct {
 	} `json:"choices"`
 }
 
+// Token usage structure
+type Usage struct {
+	PromptTokens     int `json:"prompt_tokens"`
+	CompletionTokens int `json:"completion_tokens"`
+}
+
 func sendToModelWithTools(ctx context.Context, serverURL string, mcpClient client.MCPClient, history []ChatMessage, availableTools []interface{}) ([]ChatMessage, error) {
 	// 1. prepare the request body for the API
 	requestBody, err := json.Marshal(map[string]interface{}{
@@ -51,6 +58,9 @@ func sendToModelWithTools(ctx context.Context, serverURL string, mcpClient clien
 		"messages": history,
 		"tools":    availableTools,
 		"stream":   true,
+		"stream_options": map[string]interface{}{
+			"include_usage": true, // get stats
+		},
 	})
 	if err != nil {
 		return history, err
@@ -61,6 +71,10 @@ func sendToModelWithTools(ctx context.Context, serverURL string, mcpClient clien
 		return history, err
 	}
 	req.Header.Set("Content-Type", "application/json")
+
+	startTime := time.Now()
+	var firstTokenTime time.Time
+	var finalUsage *Usage
 
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
@@ -73,9 +87,6 @@ func sendToModelWithTools(ctx context.Context, serverURL string, mcpClient clien
 	var fullContent string
 	var finalFinishReason string
 	var accumulatedToolCalls []ToolCall
-
-	// KI-Präfix nur einmal am Anfang ausgeben
-	fmt.Print("\nKI: ")
 
 	for scanner.Scan() {
 		line := scanner.Text()
@@ -96,10 +107,16 @@ func sendToModelWithTools(ctx context.Context, serverURL string, mcpClient clien
 				} `json:"delta"`
 				FinishReason string `json:"finish_reason"`
 			} `json:"choices"`
+			Usage *Usage `json:"usage,omitempty"` // getting usage stats from the stream
 		}
 
 		if err := json.Unmarshal([]byte(dataStr), &chunk); err != nil {
 			continue
+		}
+
+		// save stats
+		if chunk.Usage != nil {
+			finalUsage = chunk.Usage
 		}
 
 		if len(chunk.Choices) > 0 {
@@ -110,6 +127,10 @@ func sendToModelWithTools(ctx context.Context, serverURL string, mcpClient clien
 
 			// a) Text direkt ins Terminal drucken
 			if choice.Delta.Content != "" {
+				// time of the first token
+				if firstTokenTime.IsZero() {
+					firstTokenTime = time.Now()
+				}
 				fmt.Print(choice.Delta.Content)
 				fullContent += choice.Delta.Content
 			}
@@ -144,6 +165,18 @@ func sendToModelWithTools(ctx context.Context, serverURL string, mcpClient clien
 	}
 	fmt.Println() // Zeilenumbruch nach der fertigen Antwort
 
+	// --- PRINT STATS ---
+	if finalUsage != nil && !firstTokenTime.IsZero() {
+		promptSecs := firstTokenTime.Sub(startTime).Seconds()
+		genSecs := time.Since(firstTokenTime).Seconds()
+
+		promptSpeed := float64(finalUsage.PromptTokens) / promptSecs
+		genSpeed := float64(finalUsage.CompletionTokens) / genSecs
+
+		// \033[35m ANSI Farbcode für Magenta/Pink
+		fmt.Printf("\n\033[35m[ Prompt: %.1f t/s | Generation: %.1f t/s ]\033[0m\n", promptSpeed, genSpeed)
+	}
+
 	// 3. Die komplette Antwort zur Historie hinzufügen
 	responseMsg := ChatMessage{
 		Role:      "assistant",
@@ -155,7 +188,7 @@ func sendToModelWithTools(ctx context.Context, serverURL string, mcpClient clien
 	// --- AGENTIC LOOP ---
 	if finalFinishReason == "tool_calls" && len(accumulatedToolCalls) > 0 {
 		for _, toolCall := range accumulatedToolCalls {
-			fmt.Printf("  [Führe Werkzeug aus: %s...]\n", toolCall.Function.Name)
+			fmt.Printf("[Using Tool: %s...]\n", toolCall.Function.Name)
 
 			toolResultString := executeLocalTool(ctx, mcpClient, toolCall.Function.Name, toolCall.Function.Arguments)
 
@@ -233,15 +266,20 @@ func startTerminalChat(ctx context.Context, serverURL string, mcpClient client.M
 		history = append(history, ChatMessage{Role: "system", Content: sysPrompt})
 	}
 
-	fmt.Println("\n Chat gestartet. Beenden mit '/exit'.")
-
 	for {
-		fmt.Print("\nDu: ")
+		// \033[1;32m = Fett Grün, \033[32m = Normal Grün, \033[0m = Reset
+		fmt.Print("\n\033[1;32m[> \033[0m\033[32m")
 		input, _ := reader.ReadString('\n')
 		input = strings.TrimSpace(input)
+		fmt.Print("\033[0m") // revert to default color
 
 		if input == "/exit" {
 			break
+		}
+		if input == "/clear" {
+			history = nil
+			fmt.Println("\033[33mChat history cleared.\033[0m")
+			continue
 		}
 		if input == "" {
 			continue
@@ -253,7 +291,7 @@ func startTerminalChat(ctx context.Context, serverURL string, mcpClient client.M
 		// call the agent loop
 		newHistory, err := sendToModelWithTools(ctx, serverURL, mcpClient, history, availableTools)
 		if err != nil {
-			fmt.Printf("\n  [Fehler: %v]\n", err)
+			fmt.Printf("\n  [Error: %v]\n", err)
 		} else {
 			history = newHistory // update history with the new messages from the model
 		}

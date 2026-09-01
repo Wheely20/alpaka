@@ -218,7 +218,7 @@ func runModel(modelName string, ctxSize int, systemPrompt string) error {
 	alpakaDir, _ := getAlpakaDir()
 	modelPath := filepath.Join(alpakaDir, "models", ensureGGUFSuffix(modelName))
 
-	fmt.Printf("Starting background server for model: %s\n", modelName)
+	fmt.Printf("Starting chat with model: %s\n", modelName)
 	ctxString := strconv.Itoa(ctxSize)
 
 	// 2. Server im Hintergrund auf Port 8081 starten
@@ -251,6 +251,27 @@ func runModel(modelName string, ctxSize int, systemPrompt string) error {
 	if len(tools) > 0 {
 		fmt.Printf("Native MCP Tools active (%d tools loaded)\n", len(tools))
 	}
+
+	// Originale llama.cpp ASCII-Art
+	asciiArt := `
+ █████╗ ██╗     ██████╗  █████╗ ██╗  ██╗ █████╗ 
+██╔══██╗██║     ██╔══██╗██╔══██╗██║ ██╔╝██╔══██╗
+███████║██║     ██████╔╝███████║█████╔╝ ███████║
+██╔══██║██║     ██╔═══╝ ██╔══██║██╔═██╗ ██╔══██║
+██║  ██║███████╗██║     ██║  ██║██║  ██╗██║  ██║
+╚═╝  ╚═╝╚══════╝╚═╝     ╚═╝  ╚═╝╚═╝  ╚═╝╚═╝  ╚═╝
+`
+	fmt.Println(asciiArt)
+	fmt.Printf("model         : %s\n", modelPath)
+	fmt.Println("modalities    : text")
+
+	if len(tools) > 0 {
+		fmt.Printf("mcp tools     : active (%d loaded)\n", len(tools))
+	}
+
+	fmt.Println("\navailable commands:")
+	fmt.Println("  /exit or Ctrl+C   stop or exit")
+	fmt.Println("  /clear            clear the chat history")
 
 	// 5. Chat starten
 	startTerminalChat(ctx, "http://127.0.0.1:8081", mcpClient, systemPrompt, tools)

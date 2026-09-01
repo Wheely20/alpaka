@@ -35,18 +35,26 @@ func ensureGGUFSuffix(name string) string {
 }
 
 func waitForServer(url string) error {
-	fmt.Print("Loading model...")
+	spinner := []string{"/", "-", "\\", "|"}
 	client := http.Client{Timeout: 2 * time.Second}
 
 	// Wait max 40 seconds
-	for i := 0; i < 40; i++ {
-		resp, err := client.Get(url + "/health")
-		if err == nil && resp.StatusCode == 200 {
-			return nil
+	for i := 0; i < 400; i++ {
+		// \r rewrites the current line
+		fmt.Printf("\rLoading model... %s", spinner[i%len(spinner)])
+
+		if i%10 == 0 {
+			resp, err := client.Get(url + "/health")
+			if err == nil && resp.StatusCode == 200 {
+				// when server is ready
+				fmt.Printf("\rLoading model...\n")
+				return nil
+			}
 		}
-		fmt.Print(".")
-		time.Sleep(1 * time.Second)
+
+		time.Sleep(100 * time.Millisecond)
 	}
+
 	fmt.Println()
 	return fmt.Errorf("Error: Model took too long to load.")
 }

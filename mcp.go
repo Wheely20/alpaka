@@ -12,47 +12,42 @@ import (
 	"github.com/spf13/cobra"
 )
 
+func createMCPServer() *server.MCPServer {
+	mcpServer := server.NewMCPServer("alpaka-native-tools", version)
+
+	addTool := mcp.NewTool("add_numbers",
+		mcp.WithDescription("Adds two numbers. Use this tool when you want to calculate math problems."),
+		mcp.WithNumber("a", mcp.Required(), mcp.Description("The first number")),
+		mcp.WithNumber("b", mcp.Required(), mcp.Description("The second number")),
+	)
+
+	mcpServer.AddTool(addTool, func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		args, ok := request.Params.Arguments.(map[string]interface{})
+		if !ok {
+			return mcp.NewToolResultError("Error: Arguments could not be parsed."), nil
+		}
+
+		a, okA := args["a"].(float64)
+		b, okB := args["b"].(float64)
+
+		if !okA || !okB {
+			return mcp.NewToolResultError("Error: Arguments 'a' and 'b' must be valid numbers."), nil
+		}
+
+		result := a + b
+		resultStr := fmt.Sprintf("The result of %v + %v is %v", a, b, result)
+		return mcp.NewToolResultText(resultStr), nil
+	})
+
+	return mcpServer
+}
+
 var internalMcpCmd = &cobra.Command{
 	Use:    "internal-mcp",
 	Short:  "Starts the internal MCP tool server",
 	Hidden: true, // hide this command from the help output
 	RunE: func(cmd *cobra.Command, args []string) error {
-		// 1. Create a new MCP server instance
-		mcpServer := server.NewMCPServer("alpaka-native-tools", version)
-
-		// 2. Register Tools (z.B. Websuche, lokales Datei-Lesen)
-		addTool := mcp.NewTool("add_numbers",
-			mcp.WithDescription("Adds two numbers. Use this tool when you want to calculate math problems."),
-			mcp.WithNumber("a", mcp.Required(), mcp.Description("The first number")),
-			mcp.WithNumber("b", mcp.Required(), mcp.Description("The second number")),
-		)
-
-		// Den Handler für das Tool registrieren
-		mcpServer.AddTool(addTool, func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-			// Type assert Arguments to a map
-			args, ok := request.Params.Arguments.(map[string]interface{})
-			if !ok {
-				return mcp.NewToolResultError("Error: Arguments could not be parsed."), nil
-			}
-
-			// Argumente aus dem Request extrahieren
-			a, okA := args["a"].(float64)
-			b, okB := args["b"].(float64)
-
-			if !okA || !okB {
-				return mcp.NewToolResultError("Error: Arguments 'a' and 'b' must be valid numbers."), nil
-			}
-
-			// Die Berechnung durchführen
-			result := a + b
-
-			// Das Ergebnis als Text an das Sprachmodell zurückgeben
-			resultStr := fmt.Sprintf("The result of %v + %v is %v", a, b, result)
-			return mcp.NewToolResultText(resultStr), nil
-		})
-
-		// 3. Start the server and listen for incoming requests
-		// listens on os.Stdin and responds on os.Stdout
+		mcpServer := createMCPServer()
 		return server.ServeStdio(mcpServer)
 	},
 }
