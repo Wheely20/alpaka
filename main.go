@@ -311,13 +311,28 @@ func runServer(modelName string, ctxSize int, port int) error {
 
 	ctxString := strconv.Itoa(ctxSize)
 
-	// 4. Server-Befehl zusammenbauen
-	cmd := exec.Command(serverPath,
+	// 4. MCP-Konfiguration generieren
+	mcpConfigPath, err := generateMCPConfig()
+	if err != nil {
+		// kein fataler Fehler; falls die MCP-Generierung fehlschlägt, startet der Server ohne Tools
+		fmt.Printf("  Warning: Could not generate MCP config: %v\n", err)
+	}
+
+	// 5. Server-Befehl zusammenbauen
+	serverArgs := []string{
 		"-m", modelPath,
 		"-c", ctxString, // context size
 		"--port", fmt.Sprintf("%d", port),
 		"--host", "127.0.0.1",
-	)
+	}
+
+	// Flag für den MCP-Server hinzufügen, falls die Konfiguration existiert
+	if mcpConfigPath != "" {
+		serverArgs = append(serverArgs, "--mcp-config", mcpConfigPath)
+		fmt.Printf("MCP Native Tools integrated.\n")
+	}
+
+	cmd := exec.Command(serverPath, serverArgs...)
 
 	// Verbindet Stdin, Stdout und Stderr mit dem Terminal
 	cmd.Stdin = os.Stdin
