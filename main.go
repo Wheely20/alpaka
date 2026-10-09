@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -202,49 +203,80 @@ func ensureLlamaInstalled() (string, error) {
 	return llamaPath, nil
 }
 
-// Hauptfunktion zum Starten des Modells
 func runModel(modelName string, ctxSize int, systemPrompt string) error {
-	llamaPath, err := ensureLlamaInstalled()
+	// 1. Pfad zur llama-server Binary finden
+	llamaCliPath, err := ensureLlamaInstalled()
 	if err != nil {
 		return err
 	}
-
-	alpakaDir, err := getAlpakaDir()
-	if err != nil {
-		return fmt.Errorf("Could not load Alpaka directory: %w", err)
+	serverName := "llama-server"
+	if runtime.GOOS == "windows" {
+		serverName = "llama-server.exe"
 	}
+	serverPath := filepath.Join(filepath.Dir(llamaCliPath), serverName)
 
-	// Vorübergehendes Verzeichnis für Modelle
+	alpakaDir, _ := getAlpakaDir()
 	modelPath := filepath.Join(alpakaDir, "models", ensureGGUFSuffix(modelName))
 
-	if _, err := os.Stat(modelPath); os.IsNotExist(err) {
-		return fmt.Errorf("Model file '%s' not found at: %s", modelName, modelPath)
-	}
-
-	fmt.Printf("🚀 Starting chat with model: %s\n\n", modelName)
-
+	fmt.Printf("Starting chat with model: %s\n", modelName)
 	ctxString := strconv.Itoa(ctxSize)
 
-	// llama-cli Aufruf zusammenstellen
-	args := []string{
-		"-m", modelPath,
-		"-c", ctxString, // Kontextgröße
-		"-cnv",            // Conversation Mode
-		"--color", "auto", // Farbige Terminal-Ausgabe
+	// 2. Server im Hintergrund auf Port 8081 starten
+	cmd := exec.Command(serverPath, "-m", modelPath, "-c", ctxString, "--port", "8081", "--host", "127.0.0.1")
+	// Wir verstecken die Server-Logs, indem wir Stdout/Stderr NICHT mit os.Stdout verknüpfen
+	if err := cmd.Start(); err != nil {
+		return fmt.Errorf("Could not start backend server: %w", err)
 	}
 
-	if systemPrompt != "" {
-		args = append(args, "-sys", systemPrompt)
+	// Kill the server process when alpaka exits
+	defer cmd.Process.Kill()
+
+	if err := waitForServer("http://127.0.0.1:8081"); err != nil {
+		return err
 	}
 
-	cmd := exec.Command(llamaPath, args...)
+	// 3. MCP Client initialisieren
+	ctx := context.Background()
+	mcpClient, err := startMCPClient(ctx)
+	if err != nil {
+		return fmt.Errorf("Could not load internal tools: %w", err)
+	}
+	defer mcpClient.Close()
 
-	// Verbindet Stdin, Stdout und Stderr mit dem Terminal
-	cmd.Stdin = os.Stdin
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
+	// 4. Werkzeuge abfragen
+	tools, err := getAvailableTools(ctx, mcpClient)
+	if err != nil {
+		return fmt.Errorf("Error while fetching tools: %w", err)
+	}
+	if len(tools) > 0 {
+		fmt.Printf("Native MCP Tools active (%d tools loaded)\n", len(tools))
+	}
 
-	return cmd.Run()
+	// Originale llama.cpp ASCII-Art
+	asciiArt := `
+ █████╗ ██╗     ██████╗  █████╗ ██╗  ██╗ █████╗ 
+██╔══██╗██║     ██╔══██╗██╔══██╗██║ ██╔╝██╔══██╗
+███████║██║     ██████╔╝███████║█████╔╝ ███████║
+██╔══██║██║     ██╔═══╝ ██╔══██║██╔═██╗ ██╔══██║
+██║  ██║███████╗██║     ██║  ██║██║  ██╗██║  ██║
+╚═╝  ╚═╝╚══════╝╚═╝     ╚═╝  ╚═╝╚═╝  ╚═╝╚═╝  ╚═╝
+`
+	fmt.Println(asciiArt)
+	fmt.Printf("model         : %s\n", modelPath)
+	fmt.Println("modalities    : text")
+
+	if len(tools) > 0 {
+		fmt.Printf("mcp tools     : active (%d loaded)\n", len(tools))
+	}
+
+	fmt.Println("\navailable commands:")
+	fmt.Println("  /exit or Ctrl+C   stop or exit")
+	fmt.Println("  /clear            clear the chat history")
+
+	// 5. Chat starten
+	startTerminalChat(ctx, "http://127.0.0.1:8081", mcpClient, systemPrompt, tools)
+
+	return nil
 }
 
 // runServer startet den llama.cpp API-Server
@@ -279,13 +311,28 @@ func runServer(modelName string, ctxSize int, port int) error {
 
 	ctxString := strconv.Itoa(ctxSize)
 
-	// 4. Server-Befehl zusammenbauen
-	cmd := exec.Command(serverPath,
+	// 4. MCP-Konfiguration generieren
+	mcpConfigPath, err := generateMCPConfig()
+	if err != nil {
+		// kein fataler Fehler; falls die MCP-Generierung fehlschlägt, startet der Server ohne Tools
+		fmt.Printf("  Warning: Could not generate MCP config: %v\n", err)
+	}
+
+	// 5. Server-Befehl zusammenbauen
+	serverArgs := []string{
 		"-m", modelPath,
-		"-c", ctxString, // Kontextgröße
+		"-c", ctxString, // context size
 		"--port", fmt.Sprintf("%d", port),
-		"--host", "127.0.0.1", // Standardmäßig nur lokal erreichbar
-	)
+		"--host", "127.0.0.1",
+	}
+
+	// Flag für den MCP-Server hinzufügen, falls die Konfiguration existiert
+	if mcpConfigPath != "" {
+		serverArgs = append(serverArgs, "--mcp-config", mcpConfigPath)
+		fmt.Printf("MCP Native Tools integrated.\n")
+	}
+
+	cmd := exec.Command(serverPath, serverArgs...)
 
 	// Verbindet Stdin, Stdout und Stderr mit dem Terminal
 	cmd.Stdin = os.Stdin
@@ -578,6 +625,9 @@ func init() {
 	configCmd.AddCommand(configShowCmd)
 
 	rootCmd.AddCommand(selfupdateCmd)
+
+	// Internal MCP command
+	rootCmd.AddCommand(internalMcpCmd)
 }
 
 // applyTranslations überschreibt die Cobra-Texte
