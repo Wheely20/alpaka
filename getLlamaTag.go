@@ -13,7 +13,7 @@ type githubRelease struct {
 
 // getLatestLlamaTag fragt die GitHub API nach der neuesten Version
 func getLatestLlamaTag() (string, error) {
-	url := "https://api.github.com/repos/ggml-org/llama.cpp/releases/latest"
+	url := "https://api.github.com/repos/ggml-org/llama.cpp/releases/"
 
 	client := &http.Client{}
 	req, _ := http.NewRequest("GET", url, nil)
@@ -29,10 +29,14 @@ func getLatestLlamaTag() (string, error) {
 		return "", fmt.Errorf("GitHub API Fehler: %s", resp.Status)
 	}
 
-	var release githubRelease
-	if err := json.NewDecoder(resp.Body).Decode(&release); err != nil {
+	var releases []githubRelease
+	if err := json.NewDecoder(resp.Body).Decode(&releases); err != nil {
 		return "", err
 	}
 
-	return release.TagName, nil // Gibt z. B. "b10301" zurück
+	if len(releases) > 0 {
+		return releases[0].TagName, nil
+	}
+
+	return "", fmt.Errorf("No releases found")
 }
