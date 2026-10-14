@@ -13,7 +13,7 @@ type githubRelease struct {
 
 // getLatestLlamaTag fragt die GitHub API nach der neuesten Version
 func getLatestLlamaTag() (string, error) {
-	url := "https://api.github.com/repos/ggml-org/llama.cpp/releases/"
+	url := "https://api.github.com/repos/ggml-org/llama.cpp/releases"
 
 	client := &http.Client{}
 	req, _ := http.NewRequest("GET", url, nil)
