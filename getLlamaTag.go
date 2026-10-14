@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"os"
 )
 
 // githubRelease spiegelt nur das Feld wider, das wir aus der API brauchen
@@ -18,6 +19,11 @@ func getLatestLlamaTag() (string, error) {
 	client := &http.Client{}
 	req, _ := http.NewRequest("GET", url, nil)
 	req.Header.Set("User-Agent", "Alpaka-CLI")
+
+	// Token auslesen und als Header mitschicken (falls vorhanden)
+	if token := os.Getenv("GITHUB_TOKEN"); token != "" {
+		req.Header.Set("Authorization", "Bearer "+token)
+	}
 
 	resp, err := client.Do(req)
 	if err != nil {
