@@ -35,7 +35,7 @@ func initAlpakaDir() error {
 	return nil
 }
 
-// Gibt den Pfad zum Alpaka-Verzeichnis zurück (~/.alpaka)
+// Returns the path to the Alpaka directory (~/.alpaka)
 func getAlpakaDir() (string, error) {
 	homeDir, err := os.UserHomeDir()
 	if err != nil {
@@ -45,10 +45,18 @@ func getAlpakaDir() (string, error) {
 	return alpakaDir, nil
 }
 
-// Config speichert persistente Einstellungen in ~/.alpaka/config.json
+type MCPServerConfig struct {
+	Command  string            `json:"command"`
+	Args     []string          `json:"args"`
+	Env      map[string]string `json:"env,omitempty"`
+	Disabled bool              `json:"disabled,omitempty"`
+}
+
+// Config saves Settings in ~/.alpaka/config.json
 type Config struct {
-	LlamaCliPath  string   `json:"llama_cli_path,omitempty"`
-	DisabledTools []string `json:"disabled_tools,omitempty"`
+	LlamaCliPath  string                     `json:"llama_cli_path,omitempty"`
+	DisabledTools []string                   `json:"disabled_tools,omitempty"`
+	MCPServers    map[string]MCPServerConfig `json:"mcp_servers,omitempty"`
 }
 
 func (c *Config) IsToolActive(toolName string) bool {
@@ -247,19 +255,24 @@ func runModel(modelName string, ctxSize int, systemPrompt string) error {
 
 	// 3. MCP Client initialisieren
 	ctx := context.Background()
-	mcpClient, err := startMCPClient(ctx)
+	mcpClients, err := startMCPClients(ctx)
 	if err != nil {
 		return fmt.Errorf("Could not load internal tools: %w", err)
 	}
-	defer mcpClient.Close()
+	// Alle Clients beim Beenden sauber schließen
+	defer func() {
+		for _, c := range mcpClients {
+			c.Close()
+		}
+	}()
 
 	// 4. Werkzeuge abfragen
-	tools, err := getAvailableTools(ctx, mcpClient)
+	tools, err := getAllAvailableTools(ctx, mcpClients)
 	if err != nil {
 		return fmt.Errorf("Error while fetching tools: %w", err)
 	}
 	if len(tools) > 0 {
-		fmt.Printf("Native MCP Tools active (%d tools loaded)\n", len(tools))
+		fmt.Printf("MCP Tools active (%d tools loaded from %d servers)\n", len(tools), len(mcpClients))
 	}
 
 	// Originale llama.cpp ASCII-Art
@@ -284,7 +297,7 @@ func runModel(modelName string, ctxSize int, systemPrompt string) error {
 	fmt.Println("  /clear            clear the chat history")
 
 	// 5. Chat starten
-	startTerminalChat(ctx, "http://127.0.0.1:8081", mcpClient, systemPrompt, tools)
+	startTerminalChat(ctx, "http://127.0.0.1:8081", mcpClients, systemPrompt, tools)
 
 	return nil
 }

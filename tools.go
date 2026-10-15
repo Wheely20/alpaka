@@ -8,11 +8,6 @@ import (
 	"github.com/spf13/cobra"
 )
 
-// knownInternalTools is a list of all known internal tools
-var knownInternalTools = []string{
-	"add_numbers",
-}
-
 var toolCmd = &cobra.Command{
 	Use:   "tool",
 	Short: "Manages native MCP tools",
@@ -27,7 +22,7 @@ var toolListCmd = &cobra.Command{
 			return fmt.Errorf("Could not load configuration: %w", err)
 		}
 
-		fmt.Println("Native MCP-Werkzeuge:")
+		fmt.Println("Native MCP-Tools:")
 		for toolName := range tools.Registry {
 			// ANSI Farbcode: 32m = Grün, 31m = Rot, 0m = Reset
 			status := "\033[32m[ON]\033[0m "
