@@ -8,8 +8,9 @@ import (
 
 // ToolDef represents a tool definition with its corresponding handler function
 type ToolDef struct {
-	Tool    *mcp.Tool
-	Handler func(context.Context, mcp.CallToolRequest) (*mcp.CallToolResult, error)
+	Tool              *mcp.Tool
+	Handler           func(context.Context, mcp.CallToolRequest) (*mcp.CallToolResult, error)
+	NeedsConfirmation bool
 }
 
 // toolRegistry saves all available tools
@@ -20,5 +21,13 @@ func Register(name string, tool *mcp.Tool, handler func(context.Context, mcp.Cal
 	Registry[name] = ToolDef{
 		Tool:    tool,
 		Handler: handler,
+	}
+}
+
+func RegisterWithConfirmation(name string, tool *mcp.Tool, handler func(context.Context, mcp.CallToolRequest) (*mcp.CallToolResult, error)) {
+	Registry[name] = ToolDef{
+		Tool:              tool,
+		Handler:           handler,
+		NeedsConfirmation: true,
 	}
 }

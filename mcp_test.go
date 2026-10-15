@@ -3,8 +3,12 @@ package main
 import (
 	"context"
 	"os/exec"
+	"runtime"
+	"strings"
 	"testing"
 	"time"
+
+	"alpaka/tools"
 
 	"github.com/mark3labs/mcp-go/client"
 	"github.com/mark3labs/mcp-go/mcp"
@@ -92,5 +96,78 @@ func TestMCPStdioSubprocess(t *testing.T) {
 	expected := "The result of 100 + 250 is 350"
 	if resStr != expected {
 		t.Errorf("Expected '%s', got '%s'", expected, resStr)
+	}
+}
+
+func TestMCPStdioExecuteTerminal(t *testing.T) {
+	ctx := context.Background()
+
+	buildCmd := exec.Command("go", "build", "-o", "alpaka_test_bin", ".")
+	if err := buildCmd.Run(); err != nil {
+		t.Fatalf("Failed to build alpaka binary: %v", err)
+	}
+	defer exec.Command("rm", "-f", "alpaka_test_bin").Run()
+
+	mcpClient, err := client.NewStdioMCPClient("./alpaka_test_bin", []string{tools.ToolTimeoutEnv + "=1"}, "internal-mcp")
+	if err != nil {
+		t.Fatalf("Failed to start stdio MCP client: %v", err)
+	}
+	defer mcpClient.Close()
+
+	initReq := mcp.InitializeRequest{}
+	initReq.Params.ProtocolVersion = mcp.LATEST_PROTOCOL_VERSION
+	initReq.Params.ClientInfo = mcp.Implementation{Name: "alpaka-stdio-test", Version: "test"}
+	if _, err := mcpClient.Initialize(ctx, initReq); err != nil {
+		t.Fatalf("Failed to initialize stdio client: %v", err)
+	}
+
+	conns := map[string]*mcpConnection{
+		internalServerName: {
+			Name:           internalServerName,
+			Client:         mcpClient,
+			Timeout:        5 * time.Second,
+			MaxResultChars: defaultMCPMaxResultChars,
+		},
+	}
+	toolName := internalServerName + toolNameSeparator + "execute_terminal"
+
+	// 1. Erfolgreicher Befehl über Stdio (darf den RPC-Stream nicht stören)
+	res := executeLocalTool(ctx, conns, toolName, `{"command": "echo hello_stdio"}`)
+	if strings.TrimSpace(res) != "hello_stdio" {
+		t.Errorf("Expected 'hello_stdio', got %q", res)
+	}
+
+	// 2. Fehlgeschlagener Befehl muss als "Tool error:" (IsError: true) zurückkommen
+	errRes := executeLocalTool(ctx, conns, toolName, `{"command": "echo fail_msg >&2 && exit 42"}`)
+	if !strings.HasPrefix(errRes, "Tool error:") || !strings.Contains(errRes, "fail_msg") {
+		t.Errorf("Expected Tool error with 'fail_msg', got %q", errRes)
+	}
+
+	// 3. Der Server bekommt den Abbruch des Clients nicht mit. Das Tool muss den Befehl samt
+	// Kindprozessen selbst nach ALPAKA_TOOL_TIMEOUT_SECONDS (hier 1s) beenden.
+	if runtime.GOOS == "windows" {
+		return
+	}
+	conns[internalServerName].Timeout = 500 * time.Millisecond
+	start := time.Now()
+	timeoutRes := executeLocalTool(ctx, conns, toolName, `{"command": "sleep 9.31 & wait"}`)
+	if time.Since(start) > 4*time.Second {
+		t.Errorf("tool call was not interrupted (took %s)", time.Since(start))
+	}
+	if !strings.Contains(timeoutRes, "timeout") && !strings.Contains(timeoutRes, "timed out") {
+		t.Errorf("Expected timeout message, got %q", timeoutRes)
+	}
+
+	deadline := time.Now().Add(6 * time.Second)
+	for {
+		out, _ := exec.Command("pgrep", "-f", "sleep 9.31").Output()
+		if len(strings.TrimSpace(string(out))) == 0 {
+			break
+		}
+		if time.Now().After(deadline) {
+			exec.Command("pkill", "-f", "sleep 9.31").Run()
+			t.Fatalf("process 'sleep 9.31' is still running after the tool timeout")
+		}
+		time.Sleep(200 * time.Millisecond)
 	}
 }

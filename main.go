@@ -66,6 +66,8 @@ type Config struct {
 	MCPTimeout        int                        `json:"mcp_timeout,omitempty"`          // seconds, default 30
 	MCPMaxResultChars int                        `json:"mcp_max_result_chars,omitempty"` // default 16000
 
+	ConfirmTools []string `json:"confirm_tools,omitempty"`
+
 	// LegacyMCPServers is the former key "mcp_servers". It is migrated to MCPServers on load.
 	LegacyMCPServers map[string]MCPServerConfig `json:"mcp_servers,omitempty"`
 }

@@ -304,11 +304,18 @@ func startMCPClients(ctx context.Context) (map[string]*mcpConnection, error) {
 	if err != nil {
 		return conns, err
 	}
-	internalClient, err := client.NewStdioMCPClient(execPath, nil, "internal-mcp")
+	internalTimeout := resolveTimeout(MCPServerConfig{}, cfg)
+	// The internal server does not receive cancellations of the client. Native tools that start
+	// processes therefore enforce their own, slightly shorter deadline.
+	toolTimeout := int((internalTimeout - 2*time.Second).Seconds())
+	if toolTimeout < 1 {
+		toolTimeout = 1
+	}
+	internalEnv := []string{fmt.Sprintf("%s=%d", tools.ToolTimeoutEnv, toolTimeout)}
+	internalClient, err := client.NewStdioMCPClient(execPath, internalEnv, "internal-mcp")
 	if err != nil {
 		return conns, fmt.Errorf("could not start internal MCP server: %w", err)
 	}
-	internalTimeout := resolveTimeout(MCPServerConfig{}, cfg)
 	if err := initializeMCPClient(ctx, internalClient, internalTimeout); err != nil {
 		internalClient.Close()
 		return conns, fmt.Errorf("MCP initialization of the internal server failed: %w", err)
