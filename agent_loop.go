@@ -53,15 +53,21 @@ type Usage struct {
 
 func sendToModelWithTools(ctx context.Context, serverURL string, mcpClient client.MCPClient, history []ChatMessage, availableTools []interface{}) ([]ChatMessage, error) {
 	// 1. prepare the request body for the API
-	requestBody, err := json.Marshal(map[string]interface{}{
+	reqData := map[string]interface{}{
 		"model":    "default",
 		"messages": history,
-		"tools":    availableTools,
 		"stream":   true,
 		"stream_options": map[string]interface{}{
 			"include_usage": true, // get stats
 		},
-	})
+	}
+
+	// Only include tools if there are any available
+	if len(availableTools) > 0 {
+		reqData["tools"] = availableTools
+	}
+
+	requestBody, err := json.Marshal(reqData)
 	if err != nil {
 		return history, err
 	}
@@ -177,7 +183,7 @@ func sendToModelWithTools(ctx context.Context, serverURL string, mcpClient clien
 		fmt.Printf("\n\033[35m[ Prompt: %.1f t/s | Generation: %.1f t/s ]\033[0m\n", promptSpeed, genSpeed)
 	}
 
-	// 3. Die komplette Antwort zur Historie hinzufügen
+	// 3. Add the model's response to the history
 	responseMsg := ChatMessage{
 		Role:      "assistant",
 		Content:   fullContent,
@@ -241,6 +247,10 @@ func executeLocalTool(ctx context.Context, mcpClient client.MCPClient, name stri
 func getAvailableTools(ctx context.Context, mcpClient client.MCPClient) ([]interface{}, error) {
 	toolList, err := mcpClient.ListTools(ctx, mcp.ListToolsRequest{})
 	if err != nil {
+		// Check for "method not found" or "not supported" errors and return an empty list instead of crashing
+		if strings.Contains(err.Error(), "method not found") || strings.Contains(err.Error(), "not supported") {
+			return nil, nil
+		}
 		return nil, err
 	}
 

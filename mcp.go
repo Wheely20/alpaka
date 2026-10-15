@@ -14,30 +14,33 @@ import (
 
 func createMCPServer() *server.MCPServer {
 	mcpServer := server.NewMCPServer("alpaka-native-tools", version)
+	cfg, _ := loadConfig()
 
-	addTool := mcp.NewTool("add_numbers",
-		mcp.WithDescription("Adds two numbers. Use this tool when you want to calculate math problems."),
-		mcp.WithNumber("a", mcp.Required(), mcp.Description("The first number")),
-		mcp.WithNumber("b", mcp.Required(), mcp.Description("The second number")),
-	)
+	if cfg.IsToolActive("add_numbers") {
+		addTool := mcp.NewTool("add_numbers",
+			mcp.WithDescription("Adds two numbers. Use this tool when you want to calculate math problems."),
+			mcp.WithNumber("a", mcp.Required(), mcp.Description("The first number")),
+			mcp.WithNumber("b", mcp.Required(), mcp.Description("The second number")),
+		)
 
-	mcpServer.AddTool(addTool, func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-		args, ok := request.Params.Arguments.(map[string]interface{})
-		if !ok {
-			return mcp.NewToolResultError("Error: Arguments could not be parsed."), nil
-		}
+		mcpServer.AddTool(addTool, func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+			args, ok := request.Params.Arguments.(map[string]interface{})
+			if !ok {
+				return mcp.NewToolResultError("Error: Arguments could not be parsed."), nil
+			}
 
-		a, okA := args["a"].(float64)
-		b, okB := args["b"].(float64)
+			a, okA := args["a"].(float64)
+			b, okB := args["b"].(float64)
 
-		if !okA || !okB {
-			return mcp.NewToolResultError("Error: Arguments 'a' and 'b' must be valid numbers."), nil
-		}
+			if !okA || !okB {
+				return mcp.NewToolResultError("Error: Arguments 'a' and 'b' must be valid numbers."), nil
+			}
 
-		result := a + b
-		resultStr := fmt.Sprintf("The result of %v + %v is %v", a, b, result)
-		return mcp.NewToolResultText(resultStr), nil
-	})
+			result := a + b
+			resultStr := fmt.Sprintf("The result of %v + %v is %v", a, b, result)
+			return mcp.NewToolResultText(resultStr), nil
+		})
+	}
 
 	return mcpServer
 }

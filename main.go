@@ -47,7 +47,17 @@ func getAlpakaDir() (string, error) {
 
 // Config speichert persistente Einstellungen in ~/.alpaka/config.json
 type Config struct {
-	LlamaCliPath string `json:"llama_cli_path,omitempty"`
+	LlamaCliPath  string   `json:"llama_cli_path,omitempty"`
+	DisabledTools []string `json:"disabled_tools,omitempty"`
+}
+
+func (c *Config) IsToolActive(toolName string) bool {
+	for _, disabled := range c.DisabledTools {
+		if disabled == toolName {
+			return false
+		}
+	}
+	return true
 }
 
 func getConfigPath() (string, error) {
@@ -628,6 +638,9 @@ func init() {
 
 	// Internal MCP command
 	rootCmd.AddCommand(internalMcpCmd)
+
+	// tools commands
+	rootCmd.AddCommand(toolCmd)
 }
 
 // applyTranslations überschreibt die Cobra-Texte
