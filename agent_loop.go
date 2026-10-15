@@ -12,7 +12,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/mark3labs/mcp-go/client"
 	"github.com/mark3labs/mcp-go/mcp"
 )
 
@@ -52,7 +51,7 @@ type Usage struct {
 	CompletionTokens int `json:"completion_tokens"`
 }
 
-func sendToModelWithTools(ctx context.Context, serverURL string, mcpClients map[string]client.MCPClient, history []ChatMessage, availableTools []interface{}) ([]ChatMessage, error) {
+func sendToModelWithTools(ctx context.Context, serverURL string, mcpClients map[string]*mcpConnection, history []ChatMessage, availableTools []interface{}) ([]ChatMessage, error) {
 	// 1. prepare the request body for the API
 	reqData := map[string]interface{}{
 		"model":    "default",
@@ -215,7 +214,7 @@ func sendToModelWithTools(ctx context.Context, serverURL string, mcpClients map[
 }
 
 // executeLocalTool schickt den Tool-Call an den laufenden MCP-Server
-func executeLocalTool(ctx context.Context, mcpClients map[string]client.MCPClient, name string, argumentsJSON string) string {
+func executeLocalTool(ctx context.Context, mcpClients map[string]*mcpConnection, name string, argumentsJSON string) string {
 	// 1. Argumente vom Modell (JSON-String) in eine Map umwandeln
 	var args map[string]interface{}
 	if err := json.Unmarshal([]byte(argumentsJSON), &args); err != nil {
@@ -231,7 +230,7 @@ func executeLocalTool(ctx context.Context, mcpClients map[string]client.MCPClien
 	toolName := parts[1]
 
 	// 3. Den zuständigen Client aus der Map holen
-	mcpClient, ok := mcpClients[serverName]
+	conn, ok := mcpClients[serverName]
 	if !ok {
 		return fmt.Sprintf("System error: MCP server '%s' not found or inactive", serverName)
 	}
@@ -241,25 +240,27 @@ func executeLocalTool(ctx context.Context, mcpClients map[string]client.MCPClien
 	req.Params.Name = toolName
 	req.Params.Arguments = args
 
-	// 5. Das Tool auf dem Server ausführen lassen
-	result, err := mcpClient.CallTool(ctx, req)
+	// 5. Das Tool auf dem Server ausführen lassen (mit Timeout, damit ein hängender Server den Chat nicht blockiert)
+	callCtx := ctx
+	if conn.Timeout > 0 {
+		var cancel context.CancelFunc
+		callCtx, cancel = context.WithTimeout(ctx, conn.Timeout)
+		defer cancel()
+	}
+	result, err := conn.Client.CallTool(callCtx, req)
 	if err != nil {
+		if callCtx.Err() == context.DeadlineExceeded {
+			return fmt.Sprintf("Error while executing tool: timeout after %s (server '%s')", conn.Timeout, serverName)
+		}
 		return fmt.Sprintf("Error while executing tool: %v", err)
 	}
 
-	// 6. Das Ergebnis auswerten (MCP liefert Arrays von Content-Blöcken zurück)
-	if len(result.Content) > 0 {
-		// Wir extrahieren den ersten Text-Block
-		if textContent, ok := mcp.AsTextContent(result.Content[0]); ok {
-			return textContent.Text
-		}
-	}
-
-	return "The tool was executed, but did not return a text response."
+	// 6. Alle Content-Blöcke auswerten, IsError beachten und die Länge begrenzen
+	return formatToolResult(result, conn.MaxResultChars)
 }
 
 // getAllAvailableTools gets the tools from the MCP-Servers and converts them to the OpenAI format
-func getAllAvailableTools(ctx context.Context, clients map[string]client.MCPClient) ([]interface{}, error) {
+func getAllAvailableTools(ctx context.Context, clients map[string]*mcpConnection) ([]interface{}, error) {
 	var allTools []interface{}
 
 	// Deterministic order
@@ -270,8 +271,10 @@ func getAllAvailableTools(ctx context.Context, clients map[string]client.MCPClie
 	sort.Strings(serverNames)
 
 	for _, serverName := range serverNames {
-		mcpClient := clients[serverName]
-		toolList, err := mcpClient.ListTools(ctx, mcp.ListToolsRequest{})
+		conn := clients[serverName]
+		listCtx, cancel := context.WithTimeout(ctx, conn.Timeout)
+		toolList, err := conn.Client.ListTools(listCtx, mcp.ListToolsRequest{})
+		cancel()
 		if err != nil {
 			// A server without tool support is fine, everything else deserves a warning
 			if !strings.Contains(err.Error(), "method not found") && !strings.Contains(err.Error(), "not supported") {
@@ -297,7 +300,7 @@ func getAllAvailableTools(ctx context.Context, clients map[string]client.MCPClie
 	return allTools, nil
 }
 
-func startTerminalChat(ctx context.Context, serverURL string, mcpClients map[string]client.MCPClient, sysPrompt string, availableTools []interface{}) {
+func startTerminalChat(ctx context.Context, serverURL string, mcpClients map[string]*mcpConnection, sysPrompt string, availableTools []interface{}) {
 	reader := bufio.NewReader(os.Stdin)
 	var history []ChatMessage
 

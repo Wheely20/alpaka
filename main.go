@@ -45,18 +45,29 @@ func getAlpakaDir() (string, error) {
 	return alpakaDir, nil
 }
 
+// MCPServerConfig describes an external MCP server. The format is compatible with the
+// "mcpServers" entries of other MCP clients (Claude, Cursor, ...).
 type MCPServerConfig struct {
-	Command  string            `json:"command"`
-	Args     []string          `json:"args"`
+	Type     string            `json:"type,omitempty"` // "stdio" | "http" | "sse"; empty = derived from command/url
+	Command  string            `json:"command,omitempty"`
+	Args     []string          `json:"args,omitempty"`
 	Env      map[string]string `json:"env,omitempty"`
+	URL      string            `json:"url,omitempty"`
+	Headers  map[string]string `json:"headers,omitempty"` // ${VAR} is expanded at start
+	Timeout  int               `json:"timeout,omitempty"` // seconds, overrides Config.MCPTimeout
 	Disabled bool              `json:"disabled,omitempty"`
 }
 
 // Config saves Settings in ~/.alpaka/config.json
 type Config struct {
-	LlamaCliPath  string                     `json:"llama_cli_path,omitempty"`
-	DisabledTools []string                   `json:"disabled_tools,omitempty"`
-	MCPServers    map[string]MCPServerConfig `json:"mcp_servers,omitempty"`
+	LlamaCliPath      string                     `json:"llama_cli_path,omitempty"`
+	DisabledTools     []string                   `json:"disabled_tools,omitempty"`
+	MCPServers        map[string]MCPServerConfig `json:"mcpServers,omitempty"`
+	MCPTimeout        int                        `json:"mcp_timeout,omitempty"`          // seconds, default 30
+	MCPMaxResultChars int                        `json:"mcp_max_result_chars,omitempty"` // default 16000
+
+	// LegacyMCPServers is the former key "mcp_servers". It is migrated to MCPServers on load.
+	LegacyMCPServers map[string]MCPServerConfig `json:"mcp_servers,omitempty"`
 }
 
 func (c *Config) IsToolActive(toolName string) bool {
@@ -91,6 +102,18 @@ func loadConfig() (*Config, error) {
 	var cfg Config
 	if err := json.Unmarshal(data, &cfg); err != nil {
 		return &Config{}, err
+	}
+	// Migrate the former "mcp_servers" key to "mcpServers"
+	if len(cfg.LegacyMCPServers) > 0 {
+		if cfg.MCPServers == nil {
+			cfg.MCPServers = make(map[string]MCPServerConfig)
+		}
+		for name, srv := range cfg.LegacyMCPServers {
+			if _, exists := cfg.MCPServers[name]; !exists {
+				cfg.MCPServers[name] = srv
+			}
+		}
+		cfg.LegacyMCPServers = nil
 	}
 	return &cfg, nil
 }
@@ -262,7 +285,7 @@ func runModel(modelName string, ctxSize int, systemPrompt string) error {
 	// Alle Clients beim Beenden sauber schließen
 	defer func() {
 		for _, c := range mcpClients {
-			c.Close()
+			c.Client.Close()
 		}
 	}()
 

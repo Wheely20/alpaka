@@ -4,6 +4,7 @@ import (
 	"context"
 	"os/exec"
 	"testing"
+	"time"
 
 	"github.com/mark3labs/mcp-go/client"
 	"github.com/mark3labs/mcp-go/mcp"
@@ -53,7 +54,7 @@ func TestMCPInProcessServerAndToolExecution(t *testing.T) {
 
 	// 2. Test tool execution (executeLocalTool)
 	argJSON := `{"a": 15, "b": 27}`
-	resStr := executeLocalTool(ctx, map[string]client.MCPClient{"internal-mcp": mcpClient}, "internal-mcp"+toolNameSeparator+"add_numbers", argJSON)
+	resStr := executeLocalTool(ctx, map[string]*mcpConnection{"internal-mcp": {Name: "internal-mcp", Client: mcpClient, Timeout: 10 * time.Second}}, "internal-mcp"+toolNameSeparator+"add_numbers", argJSON)
 	expected := "The result of 15 + 27 is 42"
 	if resStr != expected {
 		t.Errorf("Expected '%s', got '%s'", expected, resStr)
@@ -87,7 +88,7 @@ func TestMCPStdioSubprocess(t *testing.T) {
 	}
 
 	argJSON := `{"a": 100, "b": 250}`
-	resStr := executeLocalTool(ctx, map[string]client.MCPClient{"internal-mcp": mcpClient}, "internal-mcp"+toolNameSeparator+"add_numbers", argJSON)
+	resStr := executeLocalTool(ctx, map[string]*mcpConnection{"internal-mcp": {Name: "internal-mcp", Client: mcpClient, Timeout: 10 * time.Second}}, "internal-mcp"+toolNameSeparator+"add_numbers", argJSON)
 	expected := "The result of 100 + 250 is 350"
 	if resStr != expected {
 		t.Errorf("Expected '%s', got '%s'", expected, resStr)
