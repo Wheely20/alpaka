@@ -3,6 +3,8 @@ package main
 import (
 	"fmt"
 
+	"alpaka/tools"
+
 	"github.com/spf13/cobra"
 )
 
@@ -26,13 +28,13 @@ var toolListCmd = &cobra.Command{
 		}
 
 		fmt.Println("Native MCP-Werkzeuge:")
-		for _, tool := range knownInternalTools {
+		for toolName := range tools.Registry {
 			// ANSI Farbcode: 32m = Grün, 31m = Rot, 0m = Reset
 			status := "\033[32m[ON]\033[0m "
-			if !cfg.IsToolActive(tool) {
+			if !cfg.IsToolActive(toolName) {
 				status = "\033[31m[OFF]\033[0m"
 			}
-			fmt.Printf("  %s %s\n", status, tool)
+			fmt.Printf("  %s %s\n", status, toolName)
 		}
 		return nil
 	},
@@ -46,15 +48,8 @@ var toolDisableCmd = &cobra.Command{
 		toolName := args[0]
 
 		// Check if the tool exists
-		toolExists := false
-		for _, t := range knownInternalTools {
-			if t == toolName {
-				toolExists = true
-				break
-			}
-		}
-		if !toolExists {
-			return fmt.Errorf("Tool '%s' is not known", toolName)
+		if _, exists := tools.Registry[toolName]; !exists {
+			return fmt.Errorf("Tool '%s' does not exist", toolName)
 		}
 
 		cfg, err := loadConfig()
