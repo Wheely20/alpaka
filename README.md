@@ -100,6 +100,30 @@ alpaka config show
 alpaka config set-cli /path/to/custom/llama-cli
 ```
 
+#### `mcp` / `tool` - Tools and external MCP servers
+Alpaka ships native tools (`alpaka tool list|enable|disable`) and can connect to external [MCP](https://modelcontextprotocol.io) servers. Native tools are **disabled by default**; enable them with `alpaka tool enable <name>`. Their tools are offered to the model as `servername__toolname`.
+
+```bash
+# local process (stdio) - put '--' in front of the command
+alpaka mcp add github -e GITHUB_PERSONAL_ACCESS_TOKEN='${GITHUB_TOKEN}' -- npx -y @modelcontextprotocol/server-github
+
+# remote server (streamable HTTP, or --transport sse for the legacy protocol)
+alpaka mcp add remote --url https://example.com/mcp -H 'Authorization=Bearer ${TOKEN}' --timeout 60
+
+alpaka mcp list
+alpaka mcp disable github   # also: enable, remove
+```
+
+- Use `${VAR}` in `env` and header values so secrets stay out of the config. A server whose variables are not set is skipped with a warning.
+- Servers are stored in `~/.alpaka/config.json` under `mcpServers` (same format as Claude, Cursor, ...), so entries can be copied over. The former key `mcp_servers` is migrated automatically.
+- Servers are started in parallel; a failing server only produces a warning.
+- Settings in `config.json`:
+
+| Key | Default | Meaning |
+|---|---|---|
+| `mcp_timeout` | `30` | Seconds for connecting and for each tool call (per server: `timeout`, or env `ALPAKA_MCP_TIMEOUT`) |
+| `mcp_max_result_chars` | `16000` | Maximum length of a tool result passed to the model, longer results are truncated |
+
 ## 📁 Directory Structure
 
 Alpaka stores all its files safely in your user home directory under `~/.alpaka/`:

@@ -8,10 +8,13 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"sort"
 	"strings"
 	"time"
+	"unicode"
 
-	"github.com/mark3labs/mcp-go/client"
+	"alpaka/tools"
+
 	"github.com/mark3labs/mcp-go/mcp"
 )
 
@@ -51,17 +54,23 @@ type Usage struct {
 	CompletionTokens int `json:"completion_tokens"`
 }
 
-func sendToModelWithTools(ctx context.Context, serverURL string, mcpClient client.MCPClient, history []ChatMessage, availableTools []interface{}) ([]ChatMessage, error) {
+func sendToModelWithTools(ctx context.Context, reader *bufio.Reader, serverURL string, mcpClients map[string]*mcpConnection, history []ChatMessage, availableTools []interface{}) ([]ChatMessage, error) {
 	// 1. prepare the request body for the API
-	requestBody, err := json.Marshal(map[string]interface{}{
+	reqData := map[string]interface{}{
 		"model":    "default",
 		"messages": history,
-		"tools":    availableTools,
 		"stream":   true,
 		"stream_options": map[string]interface{}{
 			"include_usage": true, // get stats
 		},
-	})
+	}
+
+	// Only include tools if there are any available
+	if len(availableTools) > 0 {
+		reqData["tools"] = availableTools
+	}
+
+	requestBody, err := json.Marshal(reqData)
 	if err != nil {
 		return history, err
 	}
@@ -177,7 +186,7 @@ func sendToModelWithTools(ctx context.Context, serverURL string, mcpClient clien
 		fmt.Printf("\n\033[35m[ Prompt: %.1f t/s | Generation: %.1f t/s ]\033[0m\n", promptSpeed, genSpeed)
 	}
 
-	// 3. Die komplette Antwort zur Historie hinzufügen
+	// 3. Add the model's response to the history
 	responseMsg := ChatMessage{
 		Role:      "assistant",
 		Content:   fullContent,
@@ -187,10 +196,25 @@ func sendToModelWithTools(ctx context.Context, serverURL string, mcpClient clien
 
 	// --- AGENTIC LOOP ---
 	if finalFinishReason == "tool_calls" && len(accumulatedToolCalls) > 0 {
+		cfg, cfgErr := loadConfig()
+		if cfgErr != nil {
+			fmt.Printf("Warning: could not load config, 'confirm_tools' may not apply: %v\n", cfgErr)
+		}
 		for _, toolCall := range accumulatedToolCalls {
-			fmt.Printf("[Using Tool: %s...]\n", toolCall.Function.Name)
+			var toolResultString string
 
-			toolResultString := executeLocalTool(ctx, mcpClient, toolCall.Function.Name, toolCall.Function.Arguments)
+			if requiresToolConfirmation(toolCall.Function.Name, cfg) {
+				if !promptToolConfirmation(reader, toolCall.Function.Name, toolCall.Function.Arguments) {
+					fmt.Println("\033[31m[Execution denied by user]\033[0m")
+					toolResultString = "Tool error: The user denied the execution of this command."
+				} else {
+					fmt.Printf("[Using Tool: %s...]\n", toolCall.Function.Name)
+					toolResultString = executeLocalTool(ctx, mcpClients, toolCall.Function.Name, toolCall.Function.Arguments)
+				}
+			} else {
+				fmt.Printf("[Using Tool: %s...]\n", toolCall.Function.Name)
+				toolResultString = executeLocalTool(ctx, mcpClients, toolCall.Function.Name, toolCall.Function.Arguments)
+			}
 
 			history = append(history, ChatMessage{
 				Role:       "tool",
@@ -201,64 +225,201 @@ func sendToModelWithTools(ctx context.Context, serverURL string, mcpClient clien
 		}
 
 		// Rekursion für die Folge-Antwort nach der Tool-Ausführung
-		return sendToModelWithTools(ctx, serverURL, mcpClient, history, availableTools)
+		return sendToModelWithTools(ctx, reader, serverURL, mcpClients, history, availableTools)
 	}
 
 	return history, nil
 }
 
 // executeLocalTool schickt den Tool-Call an den laufenden MCP-Server
-func executeLocalTool(ctx context.Context, mcpClient client.MCPClient, name string, argumentsJSON string) string {
+func executeLocalTool(ctx context.Context, mcpClients map[string]*mcpConnection, name string, argumentsJSON string) string {
 	// 1. Argumente vom Modell (JSON-String) in eine Map umwandeln
 	var args map[string]interface{}
 	if err := json.Unmarshal([]byte(argumentsJSON), &args); err != nil {
 		return fmt.Sprintf("System error while parsing arguments: %v", err)
 	}
 
-	// 2. Den Request an den MCP-Server zusammenbauen
+	// 2. Tool-Namen aufteilen (Routing)
+	parts := strings.SplitN(name, toolNameSeparator, 2)
+	if len(parts) != 2 {
+		return fmt.Sprintf("System error: Invalid tool name format '%s'", name)
+	}
+	serverName := parts[0]
+	toolName := parts[1]
+
+	// 3. Den zuständigen Client aus der Map holen
+	conn, ok := mcpClients[serverName]
+	if !ok {
+		return fmt.Sprintf("System error: MCP server '%s' not found or inactive", serverName)
+	}
+
+	// 4. Den Request an den MCP-Server zusammenbauen
 	req := mcp.CallToolRequest{}
-	req.Params.Name = name
+	req.Params.Name = toolName
 	req.Params.Arguments = args
 
-	// 3. Das Tool auf dem Server ausführen lassen
-	result, err := mcpClient.CallTool(ctx, req)
+	// 5. Das Tool auf dem Server ausführen lassen (mit Timeout, damit ein hängender Server den Chat nicht blockiert)
+	callCtx := ctx
+	if conn.Timeout > 0 {
+		var cancel context.CancelFunc
+		callCtx, cancel = context.WithTimeout(ctx, conn.Timeout)
+		defer cancel()
+	}
+	result, err := conn.Client.CallTool(callCtx, req)
 	if err != nil {
+		if callCtx.Err() == context.DeadlineExceeded {
+			return fmt.Sprintf("Error while executing tool: timeout after %s (server '%s')", conn.Timeout, serverName)
+		}
 		return fmt.Sprintf("Error while executing tool: %v", err)
 	}
 
-	// 4. Das Ergebnis auswerten (MCP liefert Arrays von Content-Blöcken zurück)
-	if len(result.Content) > 0 {
-		// Wir extrahieren den ersten Text-Block
-		if textContent, ok := mcp.AsTextContent(result.Content[0]); ok {
-			return textContent.Text
+	// 6. Alle Content-Blöcke auswerten, IsError beachten und die Länge begrenzen
+	return formatToolResult(result, conn.MaxResultChars)
+}
+
+// requiresToolConfirmation checks, if a tool needs confirmation before execution
+func requiresToolConfirmation(prefixedName string, cfg *Config) bool {
+	parts := strings.SplitN(prefixedName, toolNameSeparator, 2)
+	if len(parts) != 2 {
+		return false
+	}
+	serverName, toolName := parts[0], parts[1]
+
+	// 1. Interne Tools fragen direkt die Registry
+	if serverName == internalServerName {
+		if def, ok := tools.Registry[toolName]; ok && def.NeedsConfirmation {
+			return true
 		}
 	}
 
-	return "The tool was executed, but did not return a text response."
+	// 2. Optional: Liste in Config für externe Tools (z.B. cfg.ConfirmTools)
+	if cfg != nil {
+		for _, pattern := range cfg.ConfirmTools {
+			if pattern == prefixedName || pattern == serverName+toolNameSeparator+"*" {
+				return true
+			}
+		}
+	}
+	return false
 }
 
-// getAvailableTools gets the tools from the MCP-Server and converts them to the OpenAI format
-func getAvailableTools(ctx context.Context, mcpClient client.MCPClient) ([]interface{}, error) {
-	toolList, err := mcpClient.ListTools(ctx, mcp.ListToolsRequest{})
+// escapeControlChars makes control and invisible formatting characters visible (e.g. \x1b, \x0d, U+202E),
+// so the model cannot hide or rewrite parts of a command in the confirmation prompt.
+// Newlines and tabs are kept.
+func escapeControlChars(s string) string {
+	var b strings.Builder
+	for _, r := range s {
+		switch {
+		case r == '\n' || r == '\t':
+			b.WriteRune(r)
+		case unicode.IsControl(r) || unicode.Is(unicode.Cf, r) || r == '\u2028' || r == '\u2029':
+			if r < 0x100 {
+				fmt.Fprintf(&b, "\\x%02x", r)
+			} else {
+				fmt.Fprintf(&b, "\\u%04x", r)
+			}
+		default:
+			b.WriteRune(r)
+		}
+	}
+	return b.String()
+}
+
+// indentLines indents every line after the first so multi-line commands stay visually grouped
+func indentLines(s, indent string) string {
+	return strings.ReplaceAll(s, "\n", "\n"+indent)
+}
+
+// formatConfirmationPrompt builds the text shown before a tool is executed.
+// All model-controlled values are escaped, and every argument is shown.
+func formatConfirmationPrompt(toolName string, argumentsJSON string) string {
+	var sb strings.Builder
+	fmt.Fprintf(&sb, "\n\033[1;31m[Security Warning]\033[0m The model wants to execute \033[1m%s\033[0m\n", escapeControlChars(toolName))
+
+	var args map[string]interface{}
+	if err := json.Unmarshal([]byte(argumentsJSON), &args); err != nil {
+		fmt.Fprintf(&sb, "  Raw arguments: %s\n", indentLines(escapeControlChars(argumentsJSON), "    "))
+		return sb.String()
+	}
+
+	other := make(map[string]interface{})
+	for k, v := range args {
+		switch k {
+		case "command", "workdir":
+			if str, ok := v.(string); ok {
+				if k == "command" {
+					fmt.Fprintf(&sb, "  Command: \033[33m%s\033[0m\n", indentLines(escapeControlChars(str), "    "))
+				} else if strings.TrimSpace(str) != "" {
+					fmt.Fprintf(&sb, "  Workdir: %s\n", escapeControlChars(str))
+				}
+				continue
+			}
+			other[k] = v // unexpected type: show it raw
+		default:
+			other[k] = v
+		}
+	}
+	if len(other) > 0 {
+		data, _ := json.Marshal(other)
+		fmt.Fprintf(&sb, "  Other arguments: %s\n", escapeControlChars(string(data)))
+	}
+	return sb.String()
+}
+
+// promptToolConfirmation shows the complete command in the main process and reads from the shared reader.
+func promptToolConfirmation(reader *bufio.Reader, toolName string, argumentsJSON string) bool {
+	fmt.Print(formatConfirmationPrompt(toolName, argumentsJSON))
+	fmt.Print("Allow execution? [y/N]: ")
+	response, err := reader.ReadString('\n')
 	if err != nil {
-		return nil, err
+		return false
 	}
-
-	var openAITools []interface{}
-	for _, t := range toolList.Tools {
-		openAITools = append(openAITools, map[string]interface{}{
-			"type": "function",
-			"function": map[string]interface{}{
-				"name":        t.Name,
-				"description": t.Description,
-				"parameters":  t.InputSchema,
-			},
-		})
-	}
-	return openAITools, nil
+	response = strings.ToLower(strings.TrimSpace(response))
+	return response == "y" || response == "yes"
 }
 
-func startTerminalChat(ctx context.Context, serverURL string, mcpClient client.MCPClient, sysPrompt string, availableTools []interface{}) {
+// getAllAvailableTools gets the tools from the MCP-Servers and converts them to the OpenAI format
+func getAllAvailableTools(ctx context.Context, clients map[string]*mcpConnection) ([]interface{}, error) {
+	var allTools []interface{}
+
+	// Deterministic order
+	serverNames := make([]string, 0, len(clients))
+	for name := range clients {
+		serverNames = append(serverNames, name)
+	}
+	sort.Strings(serverNames)
+
+	for _, serverName := range serverNames {
+		conn := clients[serverName]
+		listCtx, cancel := context.WithTimeout(ctx, conn.Timeout)
+		toolList, err := conn.Client.ListTools(listCtx, mcp.ListToolsRequest{})
+		cancel()
+		if err != nil {
+			// A server without tool support is fine, everything else deserves a warning
+			if !strings.Contains(err.Error(), "method not found") && !strings.Contains(err.Error(), "not supported") {
+				fmt.Printf("Warning: Could not list tools of MCP server '%s': %v\n", serverName, err)
+			}
+			continue
+		}
+
+		for _, t := range toolList.Tools {
+			// Prefix the tool name: "servername__toolname"
+			prefixedName := serverName + toolNameSeparator + t.Name
+
+			allTools = append(allTools, map[string]interface{}{
+				"type": "function",
+				"function": map[string]interface{}{
+					"name":        prefixedName,
+					"description": fmt.Sprintf("[%s] %s", serverName, t.Description),
+					"parameters":  t.InputSchema,
+				},
+			})
+		}
+	}
+	return allTools, nil
+}
+
+func startTerminalChat(ctx context.Context, serverURL string, mcpClients map[string]*mcpConnection, sysPrompt string, availableTools []interface{}) {
 	reader := bufio.NewReader(os.Stdin)
 	var history []ChatMessage
 
@@ -289,7 +450,7 @@ func startTerminalChat(ctx context.Context, serverURL string, mcpClient client.M
 		history = append(history, ChatMessage{Role: "user", Content: input})
 
 		// call the agent loop
-		newHistory, err := sendToModelWithTools(ctx, serverURL, mcpClient, history, availableTools)
+		newHistory, err := sendToModelWithTools(ctx, reader, serverURL, mcpClients, history, availableTools)
 		if err != nil {
 			fmt.Printf("\n  [Error: %v]\n", err)
 		} else {

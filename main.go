@@ -35,7 +35,7 @@ func initAlpakaDir() error {
 	return nil
 }
 
-// Gibt den Pfad zum Alpaka-Verzeichnis zurück (~/.alpaka)
+// Returns the path to the Alpaka directory (~/.alpaka)
 func getAlpakaDir() (string, error) {
 	homeDir, err := os.UserHomeDir()
 	if err != nil {
@@ -45,9 +45,40 @@ func getAlpakaDir() (string, error) {
 	return alpakaDir, nil
 }
 
-// Config speichert persistente Einstellungen in ~/.alpaka/config.json
+// MCPServerConfig describes an external MCP server. The format is compatible with the
+// "mcpServers" entries of other MCP clients (Claude, Cursor, ...).
+type MCPServerConfig struct {
+	Type     string            `json:"type,omitempty"` // "stdio" | "http" | "sse"; empty = derived from command/url
+	Command  string            `json:"command,omitempty"`
+	Args     []string          `json:"args,omitempty"`
+	Env      map[string]string `json:"env,omitempty"`
+	URL      string            `json:"url,omitempty"`
+	Headers  map[string]string `json:"headers,omitempty"` // ${VAR} is expanded at start
+	Timeout  int               `json:"timeout,omitempty"` // seconds, overrides Config.MCPTimeout
+	Disabled bool              `json:"disabled,omitempty"`
+}
+
+// Config saves Settings in ~/.alpaka/config.json
 type Config struct {
-	LlamaCliPath string `json:"llama_cli_path,omitempty"`
+	LlamaCliPath      string                     `json:"llama_cli_path,omitempty"`
+	EnabledTools      []string                   `json:"enabled_tools,omitempty"` // native tools are off by default (opt-in)
+	MCPServers        map[string]MCPServerConfig `json:"mcpServers,omitempty"`
+	MCPTimeout        int                        `json:"mcp_timeout,omitempty"`          // seconds, default 30
+	MCPMaxResultChars int                        `json:"mcp_max_result_chars,omitempty"` // default 16000
+
+	ConfirmTools []string `json:"confirm_tools,omitempty"`
+
+	// LegacyMCPServers is the former key "mcp_servers". It is migrated to MCPServers on load.
+	LegacyMCPServers map[string]MCPServerConfig `json:"mcp_servers,omitempty"`
+}
+
+func (c *Config) IsToolActive(toolName string) bool {
+	for _, enabled := range c.EnabledTools {
+		if enabled == toolName {
+			return true
+		}
+	}
+	return false
 }
 
 func getConfigPath() (string, error) {
@@ -73,6 +104,18 @@ func loadConfig() (*Config, error) {
 	var cfg Config
 	if err := json.Unmarshal(data, &cfg); err != nil {
 		return &Config{}, err
+	}
+	// Migrate the former "mcp_servers" key to "mcpServers"
+	if len(cfg.LegacyMCPServers) > 0 {
+		if cfg.MCPServers == nil {
+			cfg.MCPServers = make(map[string]MCPServerConfig)
+		}
+		for name, srv := range cfg.LegacyMCPServers {
+			if _, exists := cfg.MCPServers[name]; !exists {
+				cfg.MCPServers[name] = srv
+			}
+		}
+		cfg.LegacyMCPServers = nil
 	}
 	return &cfg, nil
 }
@@ -237,19 +280,24 @@ func runModel(modelName string, ctxSize int, systemPrompt string) error {
 
 	// 3. MCP Client initialisieren
 	ctx := context.Background()
-	mcpClient, err := startMCPClient(ctx)
+	mcpClients, err := startMCPClients(ctx)
 	if err != nil {
 		return fmt.Errorf("Could not load internal tools: %w", err)
 	}
-	defer mcpClient.Close()
+	// Alle Clients beim Beenden sauber schließen
+	defer func() {
+		for _, c := range mcpClients {
+			c.Client.Close()
+		}
+	}()
 
 	// 4. Werkzeuge abfragen
-	tools, err := getAvailableTools(ctx, mcpClient)
+	tools, err := getAllAvailableTools(ctx, mcpClients)
 	if err != nil {
 		return fmt.Errorf("Error while fetching tools: %w", err)
 	}
 	if len(tools) > 0 {
-		fmt.Printf("Native MCP Tools active (%d tools loaded)\n", len(tools))
+		fmt.Printf("MCP Tools active (%d tools loaded from %d servers)\n", len(tools), len(mcpClients))
 	}
 
 	// Originale llama.cpp ASCII-Art
@@ -274,7 +322,7 @@ func runModel(modelName string, ctxSize int, systemPrompt string) error {
 	fmt.Println("  /clear            clear the chat history")
 
 	// 5. Chat starten
-	startTerminalChat(ctx, "http://127.0.0.1:8081", mcpClient, systemPrompt, tools)
+	startTerminalChat(ctx, "http://127.0.0.1:8081", mcpClients, systemPrompt, tools)
 
 	return nil
 }
@@ -628,6 +676,9 @@ func init() {
 
 	// Internal MCP command
 	rootCmd.AddCommand(internalMcpCmd)
+
+	// tools commands
+	rootCmd.AddCommand(toolCmd)
 }
 
 // applyTranslations überschreibt die Cobra-Texte

@@ -12,11 +12,6 @@ type MCPConfig struct {
 	MCPServers map[string]MCPServerConfig `json:"mcpServers"`
 }
 
-type MCPServerConfig struct {
-	Command string   `json:"command"`
-	Args    []string `json:"args"`
-}
-
 // generateMCPConfig creates the mcp_config.json in the ~/.alpaka/ directory
 func generateMCPConfig() (string, error) {
 	alpakaDir, err := getAlpakaDir()
