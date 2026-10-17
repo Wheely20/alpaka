@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"os"
 	"os/exec"
 	"runtime"
 	"strings"
@@ -15,6 +16,7 @@ import (
 )
 
 func TestMCPInProcessServerAndToolExecution(t *testing.T) {
+	enableAllNativeTools(t)
 	ctx := context.Background()
 
 	// Create MCP Server instance
@@ -66,6 +68,7 @@ func TestMCPInProcessServerAndToolExecution(t *testing.T) {
 }
 
 func TestMCPStdioSubprocess(t *testing.T) {
+	enableAllNativeTools(t)
 	ctx := context.Background()
 
 	// Build the alpaka binary first
@@ -100,6 +103,7 @@ func TestMCPStdioSubprocess(t *testing.T) {
 }
 
 func TestMCPStdioExecuteTerminal(t *testing.T) {
+	enableAllNativeTools(t)
 	ctx := context.Background()
 
 	buildCmd := exec.Command("go", "build", "-o", "alpaka_test_bin", ".")
@@ -169,5 +173,29 @@ func TestMCPStdioExecuteTerminal(t *testing.T) {
 			t.Fatalf("process 'sleep 9.31' is still running after the tool timeout")
 		}
 		time.Sleep(200 * time.Millisecond)
+	}
+}
+
+// enableAllNativeTools isolates the test from the real ~/.alpaka and enables all native
+// tools (they are disabled by default). Subprocesses inherit the temporary HOME.
+func enableAllNativeTools(t *testing.T) {
+	t.Helper()
+	// "go build" derives its caches from HOME; pin them so the temp HOME doesn't get a read-only modcache
+	for _, key := range []string{"GOPATH", "GOMODCACHE", "GOCACHE"} {
+		if out, err := exec.Command("go", "env", key).Output(); err == nil {
+			t.Setenv(key, strings.TrimSpace(string(out)))
+		}
+	}
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("USERPROFILE", os.Getenv("HOME"))
+	if err := os.MkdirAll(os.Getenv("HOME")+"/.alpaka", 0755); err != nil {
+		t.Fatal(err)
+	}
+	cfg := &Config{}
+	for name := range tools.Registry {
+		cfg.EnabledTools = append(cfg.EnabledTools, name)
+	}
+	if err := saveConfig(cfg); err != nil {
+		t.Fatal(err)
 	}
 }

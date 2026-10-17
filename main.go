@@ -61,7 +61,7 @@ type MCPServerConfig struct {
 // Config saves Settings in ~/.alpaka/config.json
 type Config struct {
 	LlamaCliPath      string                     `json:"llama_cli_path,omitempty"`
-	DisabledTools     []string                   `json:"disabled_tools,omitempty"`
+	EnabledTools      []string                   `json:"enabled_tools,omitempty"` // native tools are off by default (opt-in)
 	MCPServers        map[string]MCPServerConfig `json:"mcpServers,omitempty"`
 	MCPTimeout        int                        `json:"mcp_timeout,omitempty"`          // seconds, default 30
 	MCPMaxResultChars int                        `json:"mcp_max_result_chars,omitempty"` // default 16000
@@ -73,12 +73,12 @@ type Config struct {
 }
 
 func (c *Config) IsToolActive(toolName string) bool {
-	for _, disabled := range c.DisabledTools {
-		if disabled == toolName {
-			return false
+	for _, enabled := range c.EnabledTools {
+		if enabled == toolName {
+			return true
 		}
 	}
-	return true
+	return false
 }
 
 func getConfigPath() (string, error) {

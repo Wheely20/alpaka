@@ -57,8 +57,14 @@ var toolDisableCmd = &cobra.Command{
 			return nil
 		}
 
-		// Add the tool to the disabled list
-		cfg.DisabledTools = append(cfg.DisabledTools, toolName)
+		// Remove the tool from the enabled list
+		var newEnabled []string
+		for _, t := range cfg.EnabledTools {
+			if t != toolName {
+				newEnabled = append(newEnabled, t)
+			}
+		}
+		cfg.EnabledTools = newEnabled
 
 		if err := saveConfig(cfg); err != nil {
 			return fmt.Errorf("Error saving configuration: %w", err)
@@ -71,10 +77,15 @@ var toolDisableCmd = &cobra.Command{
 
 var toolEnableCmd = &cobra.Command{
 	Use:   "enable [name]",
-	Short: "Activates a native MCP tool",
+	Short: "Activates a native MCP tool (tools are disabled by default)",
 	Args:  cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		toolName := args[0]
+
+		// Check if the tool exists
+		if _, exists := tools.Registry[toolName]; !exists {
+			return fmt.Errorf("Tool '%s' does not exist", toolName)
+		}
 
 		cfg, err := loadConfig()
 		if err != nil {
@@ -86,14 +97,8 @@ var toolEnableCmd = &cobra.Command{
 			return nil
 		}
 
-		// Remove the tool from the disabled list
-		var newDisabled []string
-		for _, t := range cfg.DisabledTools {
-			if t != toolName {
-				newDisabled = append(newDisabled, t)
-			}
-		}
-		cfg.DisabledTools = newDisabled
+		// Add the tool to the enabled list
+		cfg.EnabledTools = append(cfg.EnabledTools, toolName)
 
 		if err := saveConfig(cfg); err != nil {
 			return fmt.Errorf("Error saving configuration: %w", err)

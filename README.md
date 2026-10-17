@@ -101,7 +101,7 @@ alpaka config set-cli /path/to/custom/llama-cli
 ```
 
 #### `mcp` / `tool` - Tools and external MCP servers
-Alpaka ships native tools (`alpaka tool list|enable|disable`) and can connect to external [MCP](https://modelcontextprotocol.io) servers. Their tools are offered to the model as `servername__toolname`.
+Alpaka ships native tools (`alpaka tool list|enable|disable`) and can connect to external [MCP](https://modelcontextprotocol.io) servers. Native tools are **disabled by default**; enable them with `alpaka tool enable <name>`. Their tools are offered to the model as `servername__toolname`.
 
 ```bash
 # local process (stdio) - put '--' in front of the command

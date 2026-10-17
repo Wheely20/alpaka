@@ -115,6 +115,7 @@ func callAddNumbers(t *testing.T, conn *mcpConnection) string {
 }
 
 func TestConnectServerStreamableHTTPWithHeaders(t *testing.T) {
+	enableAllNativeTools(t)
 	t.Setenv("ALPAKA_TEST_TOKEN", "s3cret")
 	ts := httptest.NewServer(requireBearer(server.NewStreamableHTTPServer(createMCPServer()), "s3cret"))
 	defer ts.Close()
@@ -149,6 +150,7 @@ func TestConnectServerHTTPWrongToken(t *testing.T) {
 }
 
 func TestConnectServerSSE(t *testing.T) {
+	enableAllNativeTools(t)
 	ts := server.NewTestServer(createMCPServer())
 	defer ts.Close()
 

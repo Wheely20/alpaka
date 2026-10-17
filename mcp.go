@@ -26,7 +26,7 @@ func createMCPServer() *server.MCPServer {
 	mcpServer := server.NewMCPServer("alpaka-native-tools", version)
 	cfg, _ := loadConfig()
 
-	// Goes through the registered tools and add them if they are not disabled
+	// Goes through the registered tools and adds only those that were explicitly enabled
 	for name, def := range tools.Registry {
 		if cfg.IsToolActive(name) {
 			mcpServer.AddTool(*def.Tool, def.Handler)
